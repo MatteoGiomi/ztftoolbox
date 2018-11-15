@@ -9,4 +9,4 @@ currently available submodules includes:
  - **paths**: parse and manipulate ZTF paths and files names.
  - **images**: operations with ZTF image data.
  - **pipeline**: run ZTF analysis pipeline inside the sandbox.
- - **starflats**: create starflat maps from PSF catalogs (requires [dataslicer](https://github.com/MatteoGiomi/dataslicer.git).
+ - **starflats**: create starflat maps from PSF catalogs (requires [dataslicer](https://github.com/MatteoGiomi/dataslicer.git)).
