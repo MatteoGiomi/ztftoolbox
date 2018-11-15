@@ -1,6 +1,10 @@
-# collection of python wrapper utils to run the ZTF photometric pipeline from python.
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 #
-# Author: matteo.giomi@desy.de
+# collection of python wrappers to run the ZTF photometric pipeline from python.
+#
+# Author: M. Giomi (matteo.giomi@desy.de)
+
 
 import os, glob, time, os
 import subprocess
