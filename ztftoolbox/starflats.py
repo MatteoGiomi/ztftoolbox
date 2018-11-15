@@ -116,7 +116,7 @@ class starflatter():
 
         # calibrate photometry
         ds.objtable.calmag(
-            magkey, err_mag_col = self.errmagkey, calmag_col = 'cal_mag', 
+            self.magkey, err_mag_col = self.errmagkey, calmag_col = 'cal_mag', 
             clrcoeff_name = 'CLRCOEFF', ps1_color1 = 'gmag', ps1_color2 = 'rmag')
         
         # cut based on PS1
