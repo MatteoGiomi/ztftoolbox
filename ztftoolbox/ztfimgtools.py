@@ -1,8 +1,9 @@
 # collection of functions to manipulate ZTF image data
-
+import os
 import numpy as np
 from scipy.signal import medfilt
 from astropy.io import fits
+from astropy.visualization import ZScaleInterval, ImageNormalize
 
 import logging
 logging.basicConfig(level = logging.INFO)
