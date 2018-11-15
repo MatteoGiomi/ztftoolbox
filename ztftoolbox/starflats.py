@@ -1,13 +1,18 @@
-# ZTF starflat analysis for the full camera
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+#
+# functions to create starflats. To run for the full camera, use
+#
+#        import concurrent.futures
+#        with concurrent.futures.ProcessPoolExecutor(max_workers = 4) as executor:
+#            executor.map(starflat_rcwise, list(range(64)))
+# 
+#
+# Author: M. Giomi (matteo.giomi@desy.de)
 
 import os
-import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
-from scipy.interpolate import griddata
-from scipy.stats import binned_statistic_2d
-from scipy.ndimage.filters import gaussian_filter
-import concurrent.futures
+
 
 from dataslicer.dataset import dataset
 from dataslicer.metadata import metadata
@@ -100,4 +105,9 @@ def starflat_rcwise(rcid, datadir):
 #####################
 # now run the stuff #
 #####################
+
+#import concurrent.futures
+#with concurrent.futures.ProcessPoolExecutor(max_workers = 4) as executor:
+#    executor.map(starflat_rcwise, list(range(64)))
+#print ("done!")
 
