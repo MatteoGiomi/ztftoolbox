@@ -5,7 +5,7 @@
 #
 # Author: M. Giomi (matteo.giomi@desy.de)
 
-
+from setuptools import setup
 setup(
     name='ztftoolbox',
     version='0.1',
@@ -14,5 +14,5 @@ setup(
     author_email='matteo.giomi@desy.de',
     packages=['ztftoolbox'],
     url = 'https://github.com/MatteoGiomi/ztftoolbox',
-    install_requires=['astropy', 'concurrent'],
+    install_requires=['astropy']
     )

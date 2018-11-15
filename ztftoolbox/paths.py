@@ -1,6 +1,9 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+#
 # collection of python functions to manipulate ZTF paths and files names.
 #
-# Author: matteo.giomi@desy.de
+# Author: M. Giomi (matteo.giomi@desy.de)
 
 import os
 
@@ -26,33 +29,6 @@ calprod_exts = [
     "_sexcat_ldac.fits",
     "_sexcat.txt"
     ]
-
-def rqid(ccd, q):
-    """
-        given the ccd ID number (from 1 to 16)
-        and the CCD-wise readout channel number (from 1 to 4)
-        compute the ID of that readout quadrant (from 1 to 64)
-    """
-    if type(ccd) in [str, float, int]:
-        ccd=int(ccd)
-    else:
-        ccd=ccd.astype(int)
-    if type(q) in [str, float, int]:
-        q=int(q)
-    else:
-        q=q.astype(int)
-    rqid=(ccd-1)*4 + q - 1
-    return rqid
-
-
-def ccdqid(rc):
-    """
-        given the readout quadrant ID (0 to 63), 
-        computes the ccd (1 to 16) and quadrant (1 to 4) ID
-    """
-    ccd_id = rc//4 + 1
-    q = rc%4 + 1
-    return ccd_id, q
 
 
 def parse_filefracday(filefracday):

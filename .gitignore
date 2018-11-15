@@ -1,0 +1,6 @@
+# build stuff
+/__pycache__/
+/build/
+/dist/
+/ztftoolbox.egg-info/
+
