@@ -9,7 +9,7 @@ import concurrent.futures
 import logging
 logging.basicConfig(level = logging.DEBUG)
 
-from toolbox.paths import *
+from ztftoolbox.paths import get_instrphot_log
 
 
 split_cmd = '/ztf/ops/sw/stable/ztf/src/pl/perl/UncompressAndSplitRaw.pl'
