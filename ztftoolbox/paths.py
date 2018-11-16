@@ -7,7 +7,8 @@
 
 import os
 
-archive_base = "/ztf/archive/sci/"
+archive_base_sci = "/ztf/archive/sci/"
+archive_base_cal = "/ztf/archive/cal/"
 
 # file produced by instrphotcal.pl have the following extensions
 calprod_exts = [
@@ -46,7 +47,7 @@ def parse_filefracday(filefracday):
                 )
 
 
-def parse_filename(filename):
+def parse_filename(filename, which='sci'):
     """
         given the name of a file for some ZTF pipeline data product, reverse the naming
         scheme and extract the info.
@@ -56,7 +57,8 @@ def parse_filename(filename):
             
             filename: `str`
                 name of file for some ZTF pipeline data product, e.g.:
-                ztf_20180313148067_001561_zr_c02_o_q2_log.txt
+                ztf_20180313148067_001561_zr_c02_o_q2_log.txt   (if which == 'sci')
+                ztf_20180220_zg_c03_q4_hifreqflat.fits          (if which == 'cal')
         
         Returns:
         --------
@@ -69,18 +71,28 @@ def parse_filename(filename):
     location, name = os.path.split(filename)
     name = name.split(".")[:-1][0]   # remove extension (e.g .fits, .fits.fz, ecc)
     pieces = [p.strip() for p in name.split("_")]
-    out                 = parse_filefracday(pieces[1])
-    out['field']        = int(pieces[2])
-    out['filter']       = pieces[3]
-    out['ccdid']        = int(pieces[4].replace("c", ""))
-    if len(pieces)>6:   # raw files are CCD wise, they don't have the quadrant id
-        out['q']        = int(pieces[6].replace("q", ""))
+    if which == 'sci':
+        out                 = parse_filefracday(pieces[1])
+        out['field']        = int(pieces[2])
+        out['filter']       = pieces[3]
+        out['ccdid']        = int(pieces[4].replace("c", ""))
+        if len(pieces)>6:   # raw files are CCD wise, they don't have the quadrant id
+            out['q']        = int(pieces[6].replace("q", ""))
+    elif which == 'cal':
+        out                 = dict(year = pieces[1][:4])
+        out['month']        = int(pieces[1][4:6])
+        out['day']          = int(pieces[1][6:8])
+        out['filter']       = pieces[2]
+        out['ccdid']        = int(pieces[3].replace("c", ""))
+        out['q']            = int(pieces[4].replace("q", ""))
+    else:
+        raise ValueError("which flag should be either 'sci' or 'cal'. got %s instead"%which)
     return out
 
 
 def get_instrphot_log(raw_quadrant_image):
     """
-        given a fits file containng an uncompressed raw image for a give quadrant, 
+        given a fits file containng an uncompressed raw image for a given quadrant, 
         go and look for the pipeline processing log and return a path for that file.
         
         Parameters:
@@ -100,7 +112,7 @@ def get_instrphot_log(raw_quadrant_image):
     fn_info = parse_filename(raw_quadrant_image)
     log_fn = os.path.split(raw_quadrant_image)[-1].split(".")[:-1][0]+"_log.txt"
     logfile = os.path.join(
-                            archive_base, 
+                            archive_base_sci, 
                             str(fn_info['year']), 
                             "%02d"%fn_info['month'] + "%02d"%fn_info['day'], 
                             str(fn_info['fracday']),
@@ -109,4 +121,41 @@ def get_instrphot_log(raw_quadrant_image):
     if not os.path.isfile(logfile):
         raise FileNotFoundError("logfile %s for img %s does not exists. my clues are: %s"%
             (logfile, raw_quadrant_image, repr(log_fn)))
+    return logfile
+
+
+def get_domeflat_log(cal_flat_image):
+    """
+        given a fits file containng an uncompressed calibrated domeflat image, 
+        go and look for the pipeline processing log and return a path for that file.
+        
+        Parameters:
+        -----------
+            
+            cal_flat_image: `str`
+                path to a fits file containing the calibrated hifreq flat for a given RC.
+                E.g.: ztf_20180220_zg_c03_q4_hifreqflat.fits
+        
+        Returns:
+        --------
+            
+            str, path to the logfile
+    """
+    
+    # parse the filename to get the date and info
+    fn_info = parse_filename(cal_flat_image, 'cal')
+    log_fn = os.path.split(cal_flat_image)[-1].replace(".fits", "log.txt")
+    logfile = os.path.join(
+                            archive_base_cal, 
+                            str(fn_info['year']), 
+                            "%02d"%fn_info['month'] + "%02d"%fn_info['day'], 
+                            'hifreqflat',
+                            fn_info['filter'],
+                            "ccd%02d"%fn_info['ccdid'],
+                            "q%d"%fn_info['q'],
+                            log_fn
+                        )
+    if not os.path.isfile(logfile):
+        raise FileNotFoundError("logfile %s for img %s does not exists. my clues are: %s"%
+            (logfile, cal_flat_image, repr(log_fn)))
     return logfile
