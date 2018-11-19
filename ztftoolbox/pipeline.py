@@ -13,7 +13,7 @@ import concurrent.futures
 import logging
 logging.basicConfig(level = logging.DEBUG)
 
-from ztftoolbox.paths import get_instrphot_log
+from ztftoolbox.paths import get_instrphot_log, parse_filename
 
 
 split_cmd = '/ztf/ops/sw/stable/ztf/src/pl/perl/UncompressAndSplitRaw.pl'
@@ -78,7 +78,7 @@ def execute(cmd, wdir=None, logfile=None, logger=None, env=None):
     return return_code
 
 
-def uncompress_and_split(raw_img, dest_dir, logger=None, nw=4, cleanup=True):
+def uncompress_and_split(raw_img, dest_dir, logger=None, nw=4, cleanup=True, overwrite=False):
     """
         Split a raw CCD exposure(s) file into the four quadrants
         and save the results in the desired directory.
@@ -97,29 +97,53 @@ def uncompress_and_split(raw_img, dest_dir, logger=None, nw=4, cleanup=True):
             
             cleanup: `bool`
                 if True, automatically generated QA files are removed.
-       
+            
+            overwrite: `bool`
+                if True overwrite existing files.
+        
+        Returns:
+        --------
+            
+            list of names for the split q-wise images obtained.
     """
     start = time.time()
-    
     logger = get_logger(logger)
-    logger.debug("de-compressing and splitting image %s to %s"%(raw_img, dest_dir))
     
-    # either you work just for one image or you submit jobs 
+    # either you work just for one image or you submit jobs
     if type(raw_img) == str:
-        retc = execute(['sh', split_cmd, raw_img, dest_dir], logger=logger)
+        raw_img = [raw_img]
+    
+    # check if you have already split the files and in case don't overwrite them
+    to_do = []
+    if not overwrite:
+        done = glob.glob(dest_dir+"/ztf*_q*.fits")
+        for img in raw_img:
+            if not any([parse_filename(img)['filefracday'] in qf for qf in done]):
+                to_do.append(img)
     else:
-        logger.debug("running with %d workers to process %d images"%(nw, len(raw_img)))
-        exe_args = [['sh', split_cmd, img, dest_dir] for img in raw_img]
-        with concurrent.futures.ProcessPoolExecutor(max_workers = nw) as executor:
-            executor.map(execute, exe_args)
+        to_do = raw_img
+    logger.debug("de-compressing and splitting %d image(s) to %s:\n%s"%
+        (len(raw_img), dest_dir, "\n".join(raw_img)))
+    
+    # now submit
+    exe_args = [['sh', split_cmd, img, dest_dir] for img in to_do]
+    with concurrent.futures.ProcessPoolExecutor(max_workers = nw) as executor:
+        executor.map(execute, exe_args)
     
     # cleanup if necessary
-    if cleanup:
+    if cleanup and len(to_do)>0:
         logger.debug("removing QA files from %s"%dest_dir)
         for qaf in glob.glob(dest_dir+"/ztf_*_qa.txt"):
             os.remove(qaf)
+    
+    # retrieve the files you just split
+    done = []
+    for qimg in glob.glob(dest_dir+"/ztf*_q*.fits"):
+        if any([parse_filename(qimg)['filefracday'] in ri for ri in raw_img]):
+            done.append(qimg)
     end = time.time()
     print ("done uncompress and splitting raw images. took %.2e sec"%(end-start))
+    return done
 
 
 def run_instrphot(raw_quadrant_image, wdir=None, logfile=None, logger=None, keep="all", expid=None, **kwargs):

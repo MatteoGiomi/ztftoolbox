@@ -9,6 +9,7 @@ import os
 
 archive_base_sci = "/ztf/archive/sci/"
 archive_base_cal = "/ztf/archive/cal/"
+archive_base_raw = "/ztf/archive/raw/"
 
 # file produced by instrphotcal.pl have the following extensions
 calprod_exts = [
@@ -40,10 +41,11 @@ def parse_filefracday(filefracday):
         is characters 9--14 of filefracday. Returns the results as a dictionary.
     """
     return dict(
-                year     = int(filefracday[:4]),
-                month    = int(filefracday[4:6]),
-                day      = int(filefracday[6:8]),
-                fracday  = int(filefracday[8:])
+                year        = int(filefracday[:4]),
+                month       = int(filefracday[4:6]),
+                day         = int(filefracday[6:8]),
+                fracday     = filefracday[8:],
+                filefracday = filefracday
                 )
 
 
@@ -59,7 +61,10 @@ def parse_filename(filename, which='sci'):
                 name of file for some ZTF pipeline data product, e.g.:
                 ztf_20180313148067_001561_zr_c02_o_q2_log.txt   (if which == 'sci')
                 ztf_20180220_zg_c03_q4_hifreqflat.fits          (if which == 'cal')
-        
+            
+            which: `str`
+                specify if the path is a science image or a flat/bias one.
+                
         Returns:
         --------
             
@@ -86,7 +91,7 @@ def parse_filename(filename, which='sci'):
         out['ccdid']        = int(pieces[3].replace("c", ""))
         out['q']            = int(pieces[4].replace("q", ""))
     else:
-        raise ValueError("which flag should be either 'sci' or 'cal'. got %s instead"%which)
+        raise ValueError("'which' flag should be either 'sci' or 'cal'. got %s instead"%which)
     return out
 
 
@@ -100,7 +105,7 @@ def get_instrphot_log(raw_quadrant_image):
             
             raw_quadrant_image: `str`
                 path to a fits file containing the raw quadrant wise image, e.g.:
-                ztf_20180313148067_001561_zr_c02_o_q2_log.txt
+                ztf_20180313148067_001561_zr_c02_o_q2.fits
         
         Returns:
         --------
@@ -159,3 +164,77 @@ def get_domeflat_log(cal_flat_image):
         raise FileNotFoundError("logfile %s for img %s does not exists. my clues are: %s"%
             (logfile, cal_flat_image, repr(log_fn)))
     return logfile
+
+
+def get_raw_monochrome_flats(cal_image, which = 'sci'):
+    """
+        given a fits file containng either calibrated domeflat image or a science
+        image, return the list of raw, monochromatic, CCD-wise flats that went into it.
+        
+        Parameters:
+        -----------
+            
+            cal_image: `str`
+                path to a fits file containing the calibrated hifreq flat for a given RC
+                or the corresponding sci image. E.g.: 
+                    ztf_20180220_zg_c03_q4_hifreqflat.fits (if which == 'cal')
+                    ztf_20180313148067_001561_zr_c02_o_q2.fits (if which == 'sci')
+            
+            which: `str`
+                specify if the path is a science image or a flat/bias one. If the image 
+                provided is a sci image, look in its log to figure out which flats were used.
+            
+        Returns:
+        --------
+            
+            list of paths to the raw domeflat files.
+    """
+    
+    # either look in the log of the science image or you're done.
+    cal_flat_image = None
+    if which == 'sci':
+        with open(get_instrphot_log(cal_image)) as log:
+            for l in log:
+                if "hiflatimage=" in l:
+                    cal_flat_image = l.split("=")[-1].strip()
+                    break
+    elif which == 'cal':
+        cal_flat_image = cal_image
+    else:
+        raise ValueError("'which' flag should be either 'sci' or 'cal'. got %s instead"%which)
+    
+    # now process the file name to get the log of the hiFreqFlat.pl script
+    location, name = os.path.split(cal_flat_image)
+    raw_flats = []
+    with open(get_domeflat_log(cal_flat_image)) as log:
+        for l in log:
+            if "i, rId, filename =" in l:
+                fname = l.split(" ")[-1].strip()
+                fn_info = parse_filename(fname)
+                
+                # build up the path to the file:
+                raw_flat_path = os.path.join(
+                                        archive_base_raw,
+                                        str(fn_info['year']),
+                                        "%02d"%fn_info['month'] + "%02d"%fn_info['day'],
+                                        str(fn_info['fracday']))
+                
+                # build up the raw flat name:
+                raw_flat_name = "ztf_%s%02d%02d%s_000000_%s_c%02d_f.fits.fz"%(
+                    str(fn_info['year']), fn_info['month'], fn_info['day'], 
+                    str(fn_info['fracday']), fn_info['filter'], fn_info['ccdid']
+                    )
+                
+                # combine them
+                raw_flat = os.path.join(raw_flat_path, raw_flat_name)
+                
+                # check and add it to the list
+                if not os.path.isfile(raw_flat):
+                    raise FileNotFoundError("raw flat %s for cal flat %s does not exists. my clues are: %s"%
+                        (raw_flat, cal_flat_image, repr(fn_info)))
+                else:
+                    raw_flats.append(raw_flat)
+    return raw_flats
+
+
+
