@@ -5,78 +5,18 @@
 #
 # Author: M. Giomi (matteo.giomi@desy.de)
 
-
 import os, glob, time, os
 import subprocess
 import concurrent.futures
 
-import logging
-logging.basicConfig(level = logging.DEBUG)
+#import logging
+#logging.basicConfig(level = logging.DEBUG)
 
 from ztftoolbox.paths import get_instrphot_log, parse_filename
-
+from ztftoolbox.pipes import get_logger, execute
 
 split_cmd = '/ztf/ops/sw/stable/ztf/src/pl/perl/UncompressAndSplitRaw.pl'
 photcal_cmd = '/ztf/ops/sw/stable/ztf/src/pl/perl/instrphotcal.pl'
-#photcal_cmd = '/stage/ztf-work-ztfmg/stars_and_leds/toolbox/instrphotcal.pl' #TODO: remove steps from the pipeline and just get the PSF catalogs
-
-
-def get_logger(logger):
-    return logger if not logger is None else logging.getLogger(__name__)
-
-
-def execute(cmd, wdir=None, logfile=None, logger=None, env=None):
-    """
-        Execute a system command in a given folder.
-
-        https://codereview.stackexchange.com/questions/6567/ \
-        redirecting-subprocesses-output-stdout-and-stderr-to-the-logging-module
-        
-        Parameters:
-        -----------
-            
-            wdir: `str`
-                path to the working directory you want to run the analysis from. 
-                It will be created if not existing.
-            
-            logfile: `str`
-                path to the logfile to store command output. If None, display the
-                stuff on the console.
-            
-            env: dict-like
-                environment for the command to run in. The provide dictoinary will be used
-                to update the current environment.
-        
-        Also see:
-        https://www.endpoint.com/blog/2015/01/28/getting-realtime-output-using-python
-    """
-    logger = get_logger(logger)
-    
-    # take care of the wdir and logfile
-    if (not wdir is None) and (not os.path.isdir(wdir)):
-        logger.debug("creating working directory %s"%wdir)
-        os.makedirs(wdir)
-    if logfile is None:
-        stdout = None
-    else:
-        logger.debug("command log will be saved to %s"%logfile)
-        log_handle = open(logfile, 'w+')
-        stdout = log_handle
-    
-    # need environment
-    my_env = os.environ.copy()
-    if not env is None:
-        logger.debug("Custom environ variables: %s"%repr(env))
-        my_env.update(env)
-    
-    # run the process
-    popen = subprocess.Popen(cmd, stdout=stdout, stderr=subprocess.STDOUT, cwd=wdir, env=my_env)
-    popen.communicate()
-    return_code = popen.wait()
-    if return_code:
-        raise subprocess.CalledProcessError(return_code, cmd)
-    return return_code
-
 
 def uncompress_and_split(raw_img, dest_dir, logger=None, nw=4, cleanup=True, overwrite=False):
     """

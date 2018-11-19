@@ -14,5 +14,5 @@ setup(
     author_email='matteo.giomi@desy.de',
     packages=['ztftoolbox'],
     url = 'https://github.com/MatteoGiomi/ztftoolbox',
-    install_requires=['astropy']
+    install_requires=['astropy', 'pandas', 'sqlalchemy', 'psycopg2']
     )
