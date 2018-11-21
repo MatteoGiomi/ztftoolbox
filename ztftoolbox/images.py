@@ -16,7 +16,6 @@ import logging
 logging.basicConfig(level = logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 def bin_ndarray(ndarray, new_shape, operation='sum'):
     """
     Bins an ndarray in all axes based on the target shape, by summing or
