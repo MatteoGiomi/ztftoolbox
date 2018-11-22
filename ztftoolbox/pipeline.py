@@ -5,85 +5,14 @@
 #
 # Author: M. Giomi (matteo.giomi@desy.de)
 
-import os, glob, time, os
+import os, glob, time,
 import subprocess
 import concurrent.futures
-
-#import logging
-#logging.basicConfig(level = logging.DEBUG)
 
 from ztftoolbox.paths import get_instrphot_log, parse_filename
 from ztftoolbox.pipes import get_logger, execute
 
-split_cmd = '/ztf/ops/sw/stable/ztf/src/pl/perl/UncompressAndSplitRaw.pl'
-photcal_cmd = '/ztf/ops/sw/stable/ztf/src/pl/perl/instrphotcal.pl'
-
-def uncompress_and_split(raw_img, dest_dir, logger=None, nw=4, cleanup=True, overwrite=False):
-    """
-        Split a raw CCD exposure(s) file into the four quadrants
-        and save the results in the desired directory.
-        
-        Parameters:
-        -----------
-            
-            raw_img: `str` or `list`
-                path (or paths if list) of all the raw images to be processed.
-            
-            dest_dir: `str`
-                path to the directory where the split images should go.
-            
-            nw: `int`
-                number of processes used to do the job.
-            
-            cleanup: `bool`
-                if True, automatically generated QA files are removed.
-            
-            overwrite: `bool`
-                if True overwrite existing files.
-        
-        Returns:
-        --------
-            
-            list of names for the split q-wise images obtained.
-    """
-    start = time.time()
-    logger = get_logger(logger)
-    
-    # either you work just for one image or you submit jobs
-    if type(raw_img) == str:
-        raw_img = [raw_img]
-    
-    # check if you have already split the files and in case don't overwrite them
-    to_do = []
-    if not overwrite:
-        done = glob.glob(dest_dir+"/ztf*_q*.fits")
-        for img in raw_img:
-            if not any([parse_filename(img)['filefracday'] in qf for qf in done]):
-                to_do.append(img)
-    else:
-        to_do = raw_img
-    logger.debug("de-compressing and splitting %d image(s) to %s:\n%s"%
-        (len(raw_img), dest_dir, "\n".join(raw_img)))
-    
-    # now submit
-    exe_args = [['sh', split_cmd, img, dest_dir] for img in to_do]
-    with concurrent.futures.ProcessPoolExecutor(max_workers = nw) as executor:
-        executor.map(execute, exe_args)
-    
-    # cleanup if necessary
-    if cleanup and len(to_do)>0:
-        logger.debug("removing QA files from %s"%dest_dir)
-        for qaf in glob.glob(dest_dir+"/ztf_*_qa.txt"):
-            os.remove(qaf)
-    
-    # retrieve the files you just split
-    done = []
-    for qimg in glob.glob(dest_dir+"/ztf*_q*.fits"):
-        if any([parse_filename(qimg)['filefracday'] in ri for ri in raw_img]):
-            done.append(qimg)
-    end = time.time()
-    print ("done uncompress and splitting raw images. took %.2e sec"%(end-start))
-    return done
+photcal_cmd     = '/ztf/ops/sw/stable/ztf/src/pl/perl/instrphotcal.pl'
 
 
 def run_instrphot(raw_quadrant_image, wdir=None, logfile=None, logger=None, keep="all", expid=None, **kwargs):
@@ -236,7 +165,6 @@ def proc_img(img, wdir_base):
     """ wrapper function for process pool submission."""
     my_wdir = os.path.join(wdir_base, "tmp_"+img.split("/")[-1].replace(".fits", ""))
     run_instrphot(img, wdir=my_wdir, keep='psfcat.fits')
-
 
 def calibrate_many(imgs, wdir_base, nw=4, logger=None):
     """

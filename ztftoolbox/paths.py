@@ -5,11 +5,12 @@
 #
 # Author: M. Giomi (matteo.giomi@desy.de)
 
-import os
+import os, glob, datetime
 
-archive_base_sci = "/ztf/archive/sci/"
-archive_base_cal = "/ztf/archive/cal/"
-archive_base_raw = "/ztf/archive/raw/"
+archive_base_sci    = "/ztf/archive/sci/"
+archive_base_cal    = "/ztf/archive/cal/"
+archive_base_raw    = "/ztf/archive/raw/"
+archive_base_static = "/ztf/ops/static/"
 
 # file produced by instrphotcal.pl have the following extensions
 calprod_exts = [
@@ -32,6 +33,51 @@ calprod_exts = [
     "_sexcat.txt"
     ]
 
+# filter ID to names:
+ztf_filter_names = {1: 'zg', 2: 'zr', 3: 'zi'}
+
+def get_static_calimages(rcid, fid, which, date='latest'):
+    """
+        return the static calibration image file corresponding to a 
+        given readout channel and filter, i.e.:
+        /ztf/ops/static/rc17/calimg/ztf_20170101_zg_c05_q2_lampcorr.fits
+        
+        Parameters:
+        -----------
+            
+            rcid: `int`
+                readout-channel ID.
+            
+            fid: `int`
+                ZTf filter ID.
+            
+            which: `str`
+                type of calimg file to return. Allowed values are:
+                ['pmask', 'hifreqflat', 'lownuflat', 'lampcorr']
+    """
+    
+    allowed = ['pmask', 'hifreqflat', 'lownuflat', 'lampcorr']
+    if not which in allowed:
+        raise ValueError("static calimage file have types %s. got %s"%
+            (",".join(allowed), which))
+    
+    # get all the files for the specified filter and type
+    base_dir = os.path.join(archive_base_static, "rc%02d"%rcid, "calimg")
+    all_files = glob.glob(base_dir+"/ztf_*_%s_*_%s.fits"%(ztf_filter_names[fid], which))
+    
+    # select the one you like depending on the date
+    def get_date(fn):
+        """ extract date from filename """
+        datestr = os.path.split(fn)[-1].split("_")[1]
+        return datetime.datetime.strptime(datestr, "%Y%m%d")
+    all_files = sorted(all_files, key=get_date)
+    if date == 'latest':
+        my_file = all_files[-1]
+    else:
+        my_file = [ff for ff in all_files if date in ff][0]
+    return my_file
+    
+    
 
 def parse_filefracday(filefracday):
     """
