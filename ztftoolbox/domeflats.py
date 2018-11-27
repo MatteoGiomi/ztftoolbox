@@ -5,26 +5,163 @@
 #
 # Author: M. Giomi (matteo.giomi@desy.de)
 
-
 import os
-import numpy as np
-from scipy.signal import medfilt
+import concurrent.futures
+import pandas as pd
 from astropy.io import fits
-from astropy.visualization import ZScaleInterval, ImageNormalize
-
 
 import ztftoolbox.images as ztfim
-from ztftoolbox.paths import ztf_filter_names, get_static_calimages
+from ztftoolbox.paths import ztf_filter_names, get_static_calimages, check_same_exposure
 from ztftoolbox.pipes import get_logger
 from ztftoolbox.ztfdb import ztfdb
 from ztftoolbox.mosaique import ccdqid
 
 
+flat_led_weights = dict([(n, 0.25) for n in range(16)])  # nominal weigths for LEDs: all to 1
 
-led_weights = dict([(n, 1) for n in range(16)])  # nominal weigths for LEDs: all to 1
+
+def read_ilum_from_head(flat):
+    """
+        given a raw fomeflat file, read its header and return the ILUM*
+        info such as LED wlen, ID, and so as a dictionary.
+    """
+    out = {}
+    head = fits.getheader(flat, 0)
+    for k, v in head.items():
+        if 'ILUM' in k or (k in ['OBSJD', 'FILTERID', 'CCD_ID']):
+            out[k]=v
+    out['path']=os.path.abspath(flat)
+    return out
 
 
-def create_highfreq_flats(fid, rcid, outfile=None, night_date=None, raw_flats=None, bias_frame=None, wdir="/tmp",  logger=None):
+def get_led_info(flats, nw=4, logger=None):
+    """
+        given one or more fits files, read their headers and return the ILUM*
+        info such as LED wlen, ID, and so on.
+        
+        Parameters:
+        -----------
+            
+            flats: `str` or `list`
+                path(s) to one or more raw flats with the LED info in the header.
+            
+            nw: `int`
+                number of processes in the process pool.
+            
+        Returns:
+        --------
+            
+            pandas.DataFrame.
+    """
+    logger = get_logger(logger)
+    
+    if type(flats) is str:
+        flats = [flats]
+    logger.info("reading ILUM parameters for %d raw flats:\n%s"%(len(flats), "\n".join(flats)))
+    
+    with concurrent.futures.ProcessPoolExecutor(max_workers = nw) as executor:
+        res_it = executor.map(read_ilum_from_head, flats)
+    return pd.DataFrame(list(res_it))
+
+
+def scale_flats_for_color(flats, led_weights, outdir, raw_flats=None, logger=None):
+    """
+        given a dictionary specifying the weights of each LED color and a set 
+        of flat images, apply the weights and save the images in new file(s).
+        
+        if each LED color has a weight w so that: w in [0, 1] and (w1+w2+..) = 1
+        then the i-th flat image belowinging to LED color 1 will be scaled by 
+        the coefficient:
+        
+            c_1_i = w1 * N_tot / N1
+            
+        where N_tot is the total number of flats (len(flats)) and N1 is the number 
+        of flats with LED color 1.
+        
+        Parameters:
+        -----------
+            
+            flats: `str` or `list`
+                path(s) to one or more raw flats with the LED info in the header.
+            
+            led_weigths: `dict`
+                where keys are LED numbers and values are weights. Each weight must take
+                values between 0 and 1 and the sum of all weights for the colors of the 
+                given flats must be equal to 1.
+            
+            outdir: `str`
+                path to output directory. If given, scaled flats will be saved to this
+                directory with a standard filename.
+            
+            raw_flats: `str` or `list`
+                since only the raw flats have the LED ILUM keywords in the header, 
+                use this option to provide the raw flats from which to read the LED colors, 
+                but apply the scaling to the flats argument.
+    """
+    logger = get_logger(logger)
+    
+    # read in the LED params for each file
+    read_led_from = flats if raw_flats is None else raw_flats
+    led_info = get_led_info(read_led_from, logger=logger)
+    
+    # check that the LEDs weights sums to 1
+    unique_led = led_info['ILUM_LED'].unique().tolist()
+    logger.info("Found the following LED IDs: %s"%unique_led)
+    
+    sum_w = sum(led_weights[ll] for ll in unique_led)
+    if sum_w != 1:
+        raise ValueError("Weights for LEDs %s must sum to 1. Got %s"%
+            (unique_led, led_weights))
+    
+    # apply the right scaling for each group of flats teken with a given LED.
+    n_tot, full_output = len(flats), []
+    for led, monochrome in led_info.groupby('ILUM_LED'):
+        
+        # find the weight for this LED color
+        led_w = led_weights.get(led)
+        if led_w is None:
+            raise KeyError("cannot find weights for LED # %d in %s"%(led, repr(led_weights)))
+        
+        # compute the scaling you apply to all the files for this LED
+        scale = led_w * n_tot / float(len(monochrome))
+        logger.info("Applying coeff %f to the %d flats with LED #%d (w=%f)"%
+            (scale, len(monochrome), led, led_w))
+        
+        # go back and pair the right file of the input list to 
+        # the raw flats from which you have read the color.
+        if not raw_flats is None:
+            inputs = []
+            for inf in flats:
+                for path in monochrome['path']:
+                    if check_same_exposure(inf, path):
+                        inputs.append(inf)
+                        logger.debug("input file: %s corresponds to raw flat %s"%
+                            (os.path.split(inf)[-1], os.path.split(path)[-1]))
+                        break
+            if len(inputs) != len(monochrome):
+                raise RuntimeError("Cannot match all input flats to the raw_flats.")
+        else:
+            inputs = monochrome['path'].tolist()
+        
+        # now figure the name of the output files
+        outputs = []
+        for inp in inputs:
+            outf = os.path.join(outdir, os.path.split(inp)[-1].replace(".fits", "_cscaled.fits"))
+            outputs.append(outf)
+        
+        # finally multiply them bastirds
+        ztfim.multiply_scalar(inputs, scale, outputs, overwrite=False, logger=logger)
+        
+        # and append the results
+        full_output += outputs
+    
+    # greetings to the fambly
+    logger.info("done multiplying images.")
+    return full_output
+
+
+def create_highfreq_flats(fid, rcid, outfile=None, night_date=None, led_weights=None,
+    raw_flats=None, bias_frame=None, wdir="/tmp", logger=None):
     """
         produce calibrated high freq flat image for one readout channel by stacking
         together monochromatic flats. This emulate what the hiFreqFlat.pl script
@@ -63,6 +200,11 @@ def create_highfreq_flats(fid, rcid, outfile=None, night_date=None, raw_flats=No
                 date of night used to get the calibration files, e.g. '2018-11-21'. If
                 None, you must provide bias frames and raw flats.
             
+            led_weights: `dict`
+                where keys are LED numbers and values are weights. Each weight must take
+                values between 0 and 1 and the sum of all weights for the colors of the 
+                given flats must be equal to 1. If None, no weights are applied.
+            
             raw_flats: `list`
                 collection of raw flat images for a given RC that will go into the 
                 calibrated flat. If None, try and use night_date to get the raw, uncompressed
@@ -78,10 +220,11 @@ def create_highfreq_flats(fid, rcid, outfile=None, night_date=None, raw_flats=No
     logger = get_logger(logger)
     
     # create substructre in wdir
-    split_wdir = os.path.join(wdir, 'split')
-    biass_wdir = os.path.join(wdir, 'biassub')
-    norma_wdir = os.path.join(wdir, 'normalized')
-    stack_wdir = os.path.join(wdir, 'stack')
+    split_wdir      = os.path.join(wdir, 'split')
+    biass_wdir      = os.path.join(wdir, 'biassub')
+    norma_wdir      = os.path.join(wdir, 'normalized')
+    cscaled_wdir    = os.path.join(wdir, 'cscaled')
+    stack_wdir      = os.path.join(wdir, 'stack')
     
     # get CCD and q numbers
     ccdid, q = ccdqid(rcid)
@@ -138,31 +281,40 @@ def create_highfreq_flats(fid, rcid, outfile=None, night_date=None, raw_flats=No
     ztfim.subtract_images(raw_flats, bias_frame, bias_sub_flats, nw=4, logger=logger, overwrite=False)
     
     # B) normalize the images: you need to get the bias cmask file
-    
     if not os.path.isdir(norma_wdir):
         os.makedirs(norma_wdir)
     norm_biassub_flats = [os.path.join(
         norma_wdir, rfn.replace(".fits", "_normalized_biassub.fits")) for rfn in raw_flats_names]
     bias_cmask = bias_frame.replace(".fits", "cmask.fits")
-    ztfim.normalize_image(bias_sub_flats, bias_cmask, norm_biassub_flats)
+    norm_flats = ztfim.normalize_image(bias_sub_flats, bias_cmask, norm_biassub_flats)
     
     # C) apply LED weights (before stacking)
-    pass
+    to_stack = norm_biassub_flats
+    if not led_weights is None:
+        if not os.path.isdir(cscaled_wdir):
+            os.makedirs(cscaled_wdir)
+        cscaled_flats = scale_flats_for_color(
+            norm_biassub_flats, led_weights=led_weights, outdir=cscaled_wdir, raw_flats=raw_flats, logger=logger)
+        to_stack = cscaled_flats
     
     # D) stack them all
     if not os.path.isdir(stack_wdir):
         os.makedirs(stack_wdir)
     stacked_prod = ztfim.stack_images(
-        norm_biassub_flats, sigma=2.5, output_stacked=outfile, logger=logger)
+        to_stack, sigma=2.5, output_stacked=outfile, logger=logger)
     
     # make a copy of the raw stacked file
-    os.system("cp %s %s"%(outfile, outfile.replace(".fits", "_raw.fits")))
+    stacked_raw = outfile.replace(".fits", "_raw.fits")
+    logger.info("moving raw stacked flat to: %s"%stacked_raw)
+    os.system("cp %s %s"%(outfile, stacked_raw))
     
-    # optional ??:
-    # imageStatistics -i ztf_20180220_zg_c05_q2_hifreqflatstddev.fits >& imageStatistics.out
+    # compute stats on flat std (needed to set the th for mask noisy pixels)
+    img_stats = ztfim.image_statistics(stacked_prod['output_std'])
+    mask_th = 1.85 * img_stats['median']
+    logger.info("noisy pixel mask threshold: %f"%mask_th)
     
-    # E) mask noisy pixels (TODO: set the threshold!
-    cmask = ztfim.mask_noisy_pixels(stacked_prod['output_std'], frames=len(raw_flats), min_frames=4, threshold=0.00381655)
+    # E) mask noisy pixels
+    cmask = ztfim.mask_noisy_pixels(stacked_prod['output_std'], frames=len(raw_flats), min_frames=4, threshold=mask_th)
     
     # F) apply lampcorr image
     lampcorr_img = get_static_calimages(rcid, fid, 'lampcorr', date='latest')

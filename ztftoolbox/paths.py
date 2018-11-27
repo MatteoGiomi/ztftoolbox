@@ -36,6 +36,16 @@ calprod_exts = [
 # filter ID to names:
 ztf_filter_names = {1: 'zg', 2: 'zr', 3: 'zi'}
 
+def check_same_exposure(file1, file2):
+    """
+        using info in the file names, check if the two files derives from 
+        the same exposure.
+    """
+    meta1, meta2 = parse_filename(file1), parse_filename(file2)
+    return (meta1 == meta2)
+    
+    
+
 def get_static_calimages(rcid, fid, which, date='latest'):
     """
         return the static calibration image file corresponding to a 
@@ -76,8 +86,7 @@ def get_static_calimages(rcid, fid, which, date='latest'):
     else:
         my_file = [ff for ff in all_files if date in ff][0]
     return my_file
-    
-    
+
 
 def parse_filefracday(filefracday):
     """

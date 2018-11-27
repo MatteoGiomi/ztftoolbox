@@ -7,7 +7,9 @@
 # Author: M. Giomi (matteo.giomi@desy.de)
 
 import os, glob, time
+import subprocess
 import concurrent.futures
+from astropy.io import fits
 
 from ztftoolbox.paths import parse_filename
 from ztftoolbox.pipes import get_logger, execute
@@ -18,6 +20,128 @@ normalize_cmd   = '/ztf/ops/sw/180116/ztf/bin/normimage'
 stack_cmd       = '/ztf/ops/sw/180116/ztf/bin/stack'
 mask_noisy_cmd  = '/ztf/ops/sw/180116/ztf/bin/maskNoisyPixels'
 divide_cmd      = '/ztf/ops/sw/180116/ztf/bin/divideImages'
+imgstat_cmd     = '/ztf/ops/sw/180116/ztf/bin/imageStatistics'
+
+
+def multiply_scalar_one(infile, outfile, coeff, ext=0, overwrite=False):
+    """
+        given fits file multiply the image by coeff and save the result to outfile.
+        
+        Parameters:
+        -----------
+            
+            in[out]file: `str`
+                path to input and output files.
+            
+            coeff: `float`
+                coefficient of the product
+            
+            ext: `int` or `str`
+                name of the FITS file extension (if more than one are present) you
+                want to multiply.
+            
+            overwrite: `bool`
+                passed to astropy.io.fits.writeto.
+    """
+    
+    # check if you don't want to overwtite
+    if os.path.isfile(outfile) and (not overwrite):
+        return
+
+    with fits.open(infile) as hdul:
+        head, data = hdul[ext].header, hdul[ext].data
+        head['ORIGFILE'] = infile
+        head['MULCOEFF'] = coeff
+        hdul[ext].data = data * coeff
+        hdul[ext].header = head
+        hdul.writeto(outfile, overwrite=overwrite)
+
+
+def multiply_scalar(images, coeffs, outputs, ext=0, nw=4, overwrite=False, logger=None):
+    """
+        multiply a set of images by a set of coefficients.
+        
+        Parameters:
+        -----------
+            
+            images: `str` or `list`
+                path (or paths if list) of all the images to be multiplied.
+            
+            coeffs: `float`
+                coefficient for multiplication
+            
+            outputs: `str` or `list`
+                path (or paths if list) of all resulting images. 
+            
+            ext: `int` or `str`
+                name of the FITS file extension (if more than one are present) you
+                want to multiply.
+            
+            nw: `int`
+                number of processes used to do the job.
+            
+            overwrite: `bool`
+                if True overwrite existing files.
+        
+    """
+    
+    start = time.time()
+    logger = get_logger(logger)
+    
+    # either you work just for one image or you submit jobs
+    if type(images) == str:
+        images = [images]
+    if type(outputs) == str:
+        output_files = [output_files]
+    if type(coeffs) in [int, float]:
+        coeffs = [coeffs]
+    
+    # you can multiply many images by the same coeff, or the same image
+    # by many different coefficients
+    if len(coeffs) == 1: coeffs *= len(images)
+    if len(images) == 1: images *= len(coeffs)
+    
+    # check:
+    if not (len(coeffs) == len(images) == len(outputs)):
+        raise ValueError("Number of output files must match those of images and / or coefficients.")
+    
+    # wrap the args together
+    args = list(zip(images, coeffs, outputs))
+    logger.debug("Multiplying %d images using %d workers:"%(len(args), nw))
+    for pp in args: logger.debug("%s * %f --> %s"%(pp[0], pp[1], pp[2]))
+    
+    # now submit
+    with concurrent.futures.ProcessPoolExecutor(max_workers = nw) as executor:
+        executor.map(
+            multiply_scalar_one, images, outputs, coeffs, [ext]*len(images), [overwrite]*len(images))
+    
+    # return files actually processed
+    end = time.time()
+    logger.info("done multiplying images. took %.2e sec"%(end-start))
+    return outputs
+
+
+
+def image_statistics(img, logger=None):
+    """
+        wrapper around imageStatistic. Returns image stats as dictionary
+    """
+    
+    logger = get_logger(logger)
+    logger.info("computing image statistics on: %s"%img)
+    
+    # run command and format output
+    stat_str = subprocess.check_output([imgstat_cmd, '-i', img], universal_newlines=True)
+    logger.debug(stat_str)
+    out = {}
+    for l in stat_str.split("\n"):
+        if "Image " in l and "=" in l:
+            key, value = [pp.strip() for pp in l.split("=")]
+            key = key.replace("Image ", "").replace("number of", "n").replace(" ", "_")
+            out[key] = float(value)
+    logger.info("%s"%repr(out))
+    return out
+
 
 def uncompress_and_split(raw_img, dest_dir, logger=None, nw=4, cleanup=True, overwrite=False):
     """
