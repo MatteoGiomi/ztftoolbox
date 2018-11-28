@@ -323,7 +323,7 @@ def divide_images(image_a, image_b, output, nw=4, logger=None, overwrite=False):
     return [pp[2] for pp in to_do]
 
 
-def normalize_image(image, bias_cmask, output, nw=4, logger=None, overwrite=False):
+def normalize_image(image, cmask, output, b=16, sigmas=3, r_th=None, nw=4, logger=None, overwrite=False):
     """
         Normalize input images and apply bias mask. 
         Wrapper around /ztf/ops/sw/180116/ztf/bin/normimage
@@ -334,11 +334,20 @@ def normalize_image(image, bias_cmask, output, nw=4, logger=None, overwrite=Fals
             image: `str` or `list`
                 fits image(s) to normalize
             
-            bias_cmask: `str` or `list`
-                bias mask to apply to each image.
+            cmask: `str` or `list`
+                mask frame to apply to each image.
             
             output: `str` or `list`
                 path to output file(s).
+            
+            b: `float`
+                bit-mask value to test against mask image (default = 0).
+            
+            sigmas: `float`
+                number of "sigmas" for outlier rejection.
+            
+            r_th: `float`
+                threshold for resetting result to unity (optional)
             
             nw: `int`
                 number of workers.
@@ -352,25 +361,35 @@ def normalize_image(image, bias_cmask, output, nw=4, logger=None, overwrite=Fals
     # either you work just for one image or you submit jobs
     if type(image) == str:
         image = [image]
-    if type(bias_cmask) == str:
-        bias_cmask = [bias_cmask]
+    if type(cmask) == str:
+        cmask = [cmask]
     if type(output) == str:
         output = [output]
     
     # you can subtract the same image from may other ones,
     # or subtract many diff images from the same. Output names must always be uniques
     if len(image) == 1: image *= len(output)
-    if len(bias_cmask) == 1: bias_cmask *= len(output)
-    pairs = list(zip(image, bias_cmask, output))
+    if len(cmask) == 1: cmask *= len(output)
+    pairs = list(zip(image, cmask, output))
     
     # select jobs to be run only if output does not exist or if overwrite
     to_do = [pp for pp in pairs if (not os.path.isfile(pp[2])) or overwrite]
     logger.debug("Normalizing %d images with %d workers:\n %s"%
         (len(pairs), nw, "\n".join(image)))
-    logger.debug("Using bias mask: %s"%"\n".join(bias_cmask))
+    if len(cmask)>1:
+        logger.debug("Using c mask: %s"%"\n".join(cmask))
+    else:
+        logger.debug("Using c mask: %s"%cmask[0])
     
+    # create the list of args for each command
+    exe_args = []
+    for pp in to_do:
+        cmd = [normalize_cmd, '-i', pp[0], '-m', pp[1], '-o', pp[2], '-b', "%f"%b, '-s', "%f"%sigmas]
+        if not r_th is None:
+            cmd += ['-r', "%f"%r_th]
+        exe_args.append(cmd)
+        
     # now submit
-    exe_args = [[normalize_cmd, '-i', pp[0], '-m', pp[1], '-o', pp[2]] for pp in to_do]
     with concurrent.futures.ProcessPoolExecutor(max_workers = nw) as executor:
         executor.map(execute, exe_args)
     
@@ -484,7 +503,7 @@ def stack_images(images, output_stacked, sigma=2.5, output_unc=None,
     # create the command and run it:
     cmd = [stack_cmd]
     cmd += ['-i', list_file]
-    cmd += ['-s', str(sigma)]
+    cmd += ['-s', "%f"%sigma]
     cmd += ['-a', output_av]
     cmd += ['-d', output_std]
     cmd += ['-o', output_stacked]
@@ -551,8 +570,8 @@ def mask_noisy_pixels(input_std, frames, min_frames, threshold, output_mask=None
             return output_mask
     
     # run baby
-    cmd = [mask_noisy_cmd, '-f', str(frames), '-m', str(min_frames), '-s', 
-        str(threshold), '-d', input_std, '-o', output_mask]
+    cmd = [mask_noisy_cmd, '-f', "%f"%frames, '-m', "%d"%min_frames, '-s', 
+        "%f"%threshold, '-d', input_std, '-o', output_mask]
     execute(cmd, logger=logger)
     end = time.time()
     print ("done masking noisy pixels. took %.2e sec"%(end-start))

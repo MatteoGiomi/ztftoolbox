@@ -286,7 +286,7 @@ def create_highfreq_flats(fid, rcid, outfile=None, night_date=None, led_weights=
     norm_biassub_flats = [os.path.join(
         norma_wdir, rfn.replace(".fits", "_normalized_biassub.fits")) for rfn in raw_flats_names]
     bias_cmask = bias_frame.replace(".fits", "cmask.fits")
-    norm_flats = ztfim.normalize_image(bias_sub_flats, bias_cmask, norm_biassub_flats)
+    norm_flats = ztfim.normalize_image(bias_sub_flats, bias_cmask, norm_biassub_flats, b=16, sigmas=3)
     
     # C) apply LED weights (before stacking)
     to_stack = norm_biassub_flats
@@ -300,13 +300,14 @@ def create_highfreq_flats(fid, rcid, outfile=None, night_date=None, led_weights=
     # D) stack them all
     if not os.path.isdir(stack_wdir):
         os.makedirs(stack_wdir)
+    stacked_out = outfile.replace(".fits", "_stack.fits")
     stacked_prod = ztfim.stack_images(
-        to_stack, sigma=2.5, output_stacked=outfile, logger=logger)
+        to_stack, sigma=2.5, output_stacked=stacked_out, logger=logger)
     
     # make a copy of the raw stacked file
-    stacked_raw = outfile.replace(".fits", "_raw.fits")
-    logger.info("moving raw stacked flat to: %s"%stacked_raw)
-    os.system("cp %s %s"%(outfile, stacked_raw))
+#    stacked_raw = outfile.replace(".fits", "_raw.fits")
+#    logger.info("moving raw stacked flat to: %s"%stacked_raw)
+#    os.system("cp %s %s"%(outfile, stacked_raw))
     
     # compute stats on flat std (needed to set the th for mask noisy pixels)
     img_stats = ztfim.image_statistics(stacked_prod['output_std'])
@@ -318,11 +319,11 @@ def create_highfreq_flats(fid, rcid, outfile=None, night_date=None, led_weights=
     
     # F) apply lampcorr image
     lampcorr_img = get_static_calimages(rcid, fid, 'lampcorr', date='latest')
-    stacked_lampcorr = outfile.replace(".fits", "_lampcorr.fits")
-    ztfim.divide_images(outfile, lampcorr_img, output=stacked_lampcorr, logger=logger, overwrite=False)
+    stacked_lampcorr = stacked_out.replace(".fits", "_lampcorr.fits")
+    ztfim.divide_images(stacked_out, lampcorr_img, output=stacked_lampcorr, logger=logger, overwrite=False)
     
     # G) normalize again
-    ztfim.normalize_image(stacked_lampcorr, cmask, outfile)
+    ztfim.normalize_image(stacked_lampcorr, cmask, outfile, b=16, sigmas=3, r_th=0.01, overwrite=True)
     logger.info("DONE FOR GOOD: here is your high-freq flat: %s"%outfile)
     
     # TODO: move result in wdir (back one level from wdir/stack)
