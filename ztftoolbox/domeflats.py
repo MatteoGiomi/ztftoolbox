@@ -160,6 +160,61 @@ def scale_flats_for_color(flats, led_weights, outdir, raw_flats=None, logger=Non
     return full_output
 
 
+def get_uncomp_raw_flats(fid, ccdid, night_date, dest_dir, q=None, db_handle=None, logger=None):
+    """
+        query the SODB for the raw flats taken on a given night, uncompress and
+        split them in quandrant-wise files, and save the results in given directory.
+        
+        Returns a list with the files produced.
+        
+        NOTE: this will gather and plit all the files for the given CCD, for all the
+        quandrants.
+        
+        Parameters:
+        -----------
+            
+            fid: `int`
+                ZTF filter id (1='g', 2='r', 3='i').
+            
+            ccdid: `int`
+                ID for the CCD (1 to 16).
+            
+            night_date: `str`
+                date of night used to get the calibration files, e.g. '2018-11-21'.
+            
+            dest_dir: `str`
+                path to directory where the uncompressed files will be stored. It will
+                be created if not existing.
+            
+            q: `int`
+                quandrant ID (1 to 4). If given it will return a list with just the 
+                files for this specific quadrant (although the files for all the q 
+                of the given CCDs will be processed)
+            
+            db_handle: `ztftoolbox.ztfdb.ztfdb` instance
+                client to query the SODB.
+    """
+    logger = get_logger(logger)
+    
+    # get the raw CCD-wise images
+    if db_handle is None:
+        db_handle = ztfdb(logger=logger)
+    raw_ccd_flats = db_handle.get_rawflats(date=night_date, fid=fid, ccdid=ccdid)['filename'].tolist()
+    
+    # uncompress and split (use subdirectory of the wdir)
+    if not os.path.isdir(dest_dir):
+        os.makedirs(dest_dir)
+    qflats = ztfim.uncompress_and_split(
+        raw_ccd_flats, dest_dir=dest_dir, logger=logger, nw=4, cleanup=True, overwrite=False)
+    
+    # select those for this readout channel (if given) and return a list of them
+    if q is None:
+        raw_flats = [qf for qf in qflats if ('c%02d'%ccdid in qf)]
+    else:
+        raw_flats = [qf for qf in qflats if ('c%02d'%ccdid in qf) and ('q%d'%q in qf)]
+    return raw_flats
+
+
 def create_highfreq_flats(fid, rcid, outfile=None, night_date=None, led_weights=None,
     raw_flats=None, bias_frame=None, wdir="/tmp", logger=None):
     """
@@ -230,9 +285,12 @@ def create_highfreq_flats(fid, rcid, outfile=None, night_date=None, led_weights=
     ccdid, q = ccdqid(rcid)
     
     # create output file name:
-    if outfile is None and (not night_date is None):
-        outfile = os.path.join(stack_wdir, "ztf_%s_%s_c%02d_q%d_hifreqflat.fits"%(
-            night_date.replace('-',''), ztf_filter_names[fid], ccdid, q))
+    if outfile is None:
+        if not night_date is None:
+            outfile = os.path.join(stack_wdir, "ztf_%s_%s_c%02d_q%d_hifreqflat.fits"%(
+                night_date.replace('-',''), ztf_filter_names[fid], ccdid, q))
+        else:
+            raise RuntimeError("If night_date is not specified, you must provide a name for the output file.")
 
     # ------------------------------------------------- #
     #           COLLECT AND UNPACK RAW FLATS            #
@@ -244,17 +302,8 @@ def create_highfreq_flats(fid, rcid, outfile=None, night_date=None, led_weights=
         if night_date is None:
             raise ValueError("you must provide a night_date if you don't specify the raw flats.")
         
-        # get the raw CCD-wise images
-        raw_ccd_flats = db_handle.get_rawflats(date=night_date, fid=fid, ccdid=ccdid)['filename'].tolist()
-        
-        # uncompress and split (use subdirectory of the wdir)
-        if not os.path.isdir(split_wdir):
-            os.makedirs(split_wdir)
-        qflats = ztfim.uncompress_and_split(
-            raw_ccd_flats, dest_dir=split_wdir, logger=logger, nw=4, cleanup=True, overwrite=False)
-        
-        # select those for this readout channel
-        raw_flats = [qf for qf in qflats if ('c%02d'%ccdid in qf) and ('q%d'%q in qf)]
+        raw_flats = get_uncomp_raw_flats(
+            fid=fid, ccdid=ccdid, night_date=night_date, dest_dir=split_wdir, q=q, db_handle=db_handle, logger=logger)
         
     # same for the bias frame:
     if bias_frame is None:
@@ -273,7 +322,6 @@ def create_highfreq_flats(fid, rcid, outfile=None, night_date=None, led_weights=
     # -------------------------------------------- #
     
     # A) subtract bias frames from all of them and save them to subdir of wdir
-    
     if not os.path.isdir(biass_wdir):
         os.makedirs(biass_wdir)
     bias_sub_flats = [os.path.join(
@@ -300,14 +348,9 @@ def create_highfreq_flats(fid, rcid, outfile=None, night_date=None, led_weights=
     # D) stack them all
     if not os.path.isdir(stack_wdir):
         os.makedirs(stack_wdir)
-    stacked_out = outfile.replace(".fits", "_stack.fits")
+    stacked_out = os.path.join(stack_wdir, os.path.split(outfile)[-1].replace(".fits", "_stack.fits"))
     stacked_prod = ztfim.stack_images(
         to_stack, sigma=2.5, output_stacked=stacked_out, logger=logger)
-    
-    # make a copy of the raw stacked file
-#    stacked_raw = outfile.replace(".fits", "_raw.fits")
-#    logger.info("moving raw stacked flat to: %s"%stacked_raw)
-#    os.system("cp %s %s"%(outfile, stacked_raw))
     
     # compute stats on flat std (needed to set the th for mask noisy pixels)
     img_stats = ztfim.image_statistics(stacked_prod['output_std'])

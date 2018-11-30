@@ -5,9 +5,10 @@
 #
 # Author: M. Giomi (matteo.giomi@desy.de)
 
-import os, glob, time,
+import os, glob, time
 import subprocess
 import concurrent.futures
+from functools import partial
 
 from ztftoolbox.paths import get_instrphot_log, parse_filename
 from ztftoolbox.pipes import get_logger, execute
@@ -161,12 +162,13 @@ def run_instrphot(raw_quadrant_image, wdir=None, logfile=None, logger=None, keep
     logger.debug("done processing %s. took %.2e sec"%(raw_quadrant_image, (end-start)))
     return rcode
 
-def proc_img(img, wdir_base):
-    """ wrapper function for process pool submission."""
+def proc_img(img, wdir_base, logger, **kwargs):
+    """ wrapper function for run_instrphot process pool submission."""
+    print (locals())
     my_wdir = os.path.join(wdir_base, "tmp_"+img.split("/")[-1].replace(".fits", ""))
-    run_instrphot(img, wdir=my_wdir, keep='psfcat.fits')
+    run_instrphot(raw_quadrant_image=img, wdir=my_wdir, keep='psfcat.fits', logger=logger, **kwargs)
 
-def calibrate_many(imgs, wdir_base, nw=4, logger=None):
+def calibrate_many(imgs, wdir_base, nw=4, logger=None, **kwargs):
     """
         run instrumental photometric calibration for a set of images using multiprocessing
         and store the psfcat and the logs produced.
@@ -195,6 +197,9 @@ def calibrate_many(imgs, wdir_base, nw=4, logger=None):
             
             nw: `int`
                 number of processes in the process pool.
+            
+            kwargs:
+                optional arguments passed to run_instrphot, see this docstring for more info.
         
         Returns:
         --------
@@ -208,7 +213,10 @@ def calibrate_many(imgs, wdir_base, nw=4, logger=None):
     
     start = time.time()
     with concurrent.futures.ProcessPoolExecutor(max_workers = nw) as executor:
-        executor.map(proc_img, imgs, [wdir_base]*len(imgs))
+        for img in imgs:
+            executor.submit(proc_img, img, wdir_base, logger, **kwargs)
+            
+#        executor.map(partial(proc_img, imgs, wdir_base, **kwargs)), imgs, [wdir_base]*len(imgs))
     end = time.time()
     logger.info("done processing %d images. Took %.2e sec"%
         (len(imgs), (end-start)))

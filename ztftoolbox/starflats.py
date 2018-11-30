@@ -36,7 +36,7 @@ class starflatter():
             set default values for analysis parameters
         """
         
-        self.logger if not logger is None else logging.getLogger(__name__)
+        self.logger = logger if not logger is None else logging.getLogger(__name__)
         
         # names of columns
         self.xcoord         = "ra"
@@ -86,7 +86,7 @@ class starflatter():
         """
         
         # load the stuff
-        ds = dataset("starflat_rc%d"%rcid, datadir)
+        ds = dataset("starflat_rc%d"%rcid, datadir, logger=self.logger)
         ds.load(metadata_ext = 0, objtable_ext = 'PSF_CATALOG',
             header_keys = self.meta_keys, 
             metadata_file = metadata_file,#os.path.join(datadir, 'starflat_metadata.csv'),
@@ -125,16 +125,12 @@ class starflatter():
         # remove sources belonging to cluster with outlier
         ds.objtable.select_clusters(self.hard_magdiff_cut, plot_x = 'cal_mag', plot_y = 'gmag')
         
-        
-        return ds.objtable.df
-    
-#        # save the dataframe to file
-#         = pd.concat(
-#            [ds.objtable.df,
-#            ( ds.objtable.df['cal_mag'] - ds.objtable.df['gmag'] ).rename('mag_diff')],
-#            axis =1)
-#        return 
-#        
+        # add nice column and return
+        df = pd.concat(
+            [ds.objtable.df,
+            ( ds.objtable.df['cal_mag'] - ds.objtable.df['gmag'] ).rename('mag_diff')],
+            axis =1)
+        return df
 
 
 #import concurrent.futures
