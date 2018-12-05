@@ -14,15 +14,112 @@ import os
 import pandas as pd
 
 import logging
-logging.basicConfig(level = logging.DEBUG)
+logging.basicConfig()
 
 from dataslicer.dataset import dataset
 from dataslicer.metadata import metadata
 from dataslicer.objtable import objtable
 
+#import numpy as np
+#from scipy.stats import binned_statistic_2d
 
-# ----- global analysis settings ------ #
+#def bin_csv(csv_file, xname, yname, zname, rotate=True, statistic='mean', bins=50, compression='gzip', **kwargs):
+#    """
+#        given a csv file with a dataframe, bin the data according to 
+#        x and y, and compute some bin-wise statistic. Return the corresponding
+#        2D array.
+#        
+#        Uses scipy.binned_statistic_2d:
+#        https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.binned_statistic_2d.html
+#        
+#        Parameters:
+#        -----------
+#            
+#            csv_file: `str`
+#                path to a csv file that can be parsed with pandas.read_csv
+#            
+#            x[y][z]name: `str`
+#                name of the variables (x, and y) which you want to bin on, and of the
+#                quantity (z) you want to aggregate in each bin.
+#            
+#            rotate: `bool`
+#                if True, output array will be rotated 180 deg.
+#            
+#            statistic: `str`
+#                which kind of aggredation function to apply to each bin.
+#            
+#            bins: `int` or [`int`, `int`] or `array_like` or [`array`, `array`]
+#                how to bin in each dimension
+#            
+#            kwargs: `args`
+#                to be passed to scipy.binned_statistic_2d. See:
+#                
+#        
+#        Returns:
+#        --------
+#            
+#            numpy array
+#        
+#    """
+#    
+#    # read the file
+#    df = pd.read_csv(csv_file, compression = 'gzip')
+#    
+#    # add defaults to kwargs (standard RC size)
+#    bs_range = kwargs.get('range', [[0, 3072], [0, 3080]])
+#    binned = binned_statistic_2d(
+#        df[xname], df[yname], df[zname], statistic=statistic, bins=bins, range=bs_range, **kwargs)
+#    hist = binned.statistic.T
+#    
+#    # rotate eventually and return
+#    if rotate:
+#        hist = np.rot90(hist, 2)
+#    return hist
 
+def rotate_rc_xypos(xpos, ypos, rcid=None, q=None, xmax=3072, ymax=3080):
+    """
+        Transform two lists of RC-wise pixel corrdinates so that the 
+        radial excess sit at the origin. hint: (3k, 3k) is, in the raw 
+        coordinates, always in the upper left corner.
+        
+        Parameters:
+        -----------
+            
+            x[y]pos: `array-like`
+                pixel coordinates.
+            
+            rcid: `int`
+                Id of readout channel of xpos and ypos (0 to 63). If None, you 
+                must provide q.
+            
+            q: `int`
+                quadrant identifier (1 to 4).
+        
+        Returns:
+            new rotated positions.
+        
+    """
+    if q is None:
+        q = (rcid % 4) + 1
+    if q == 1:
+        # radial origin in upper left
+        x = - (xpos - xmax)
+        y = - (ypos - ymax)
+    elif q == 2:
+        # radial origin in upper right
+        x = xpos
+        y = - (ypos - ymax)
+    elif q == 3:
+        # radial origin in lower right
+        x = xpos
+        y = ypos
+    elif q == 4:
+        # radial origin in lower left
+        x = - (xpos - xmax)
+        y = ypos
+    else:
+        raise ValueError("Values of q must be 1, 2, 3, or 4. Got %d instead"%q)
+    return x, y
 
 class starflatter():
     """
@@ -131,7 +228,6 @@ class starflatter():
             ( ds.objtable.df['cal_mag'] - ds.objtable.df['gmag'] ).rename('mag_diff')],
             axis =1)
         return df
-
 
 #import concurrent.futures
 #with concurrent.futures.ProcessPoolExecutor(max_workers = 4) as executor:
