@@ -366,6 +366,6 @@ class starfitter():
         
         
         # now return the data
-        data = evaluate_model(self.model_func, model_params=popt, npp=(3072, 3088))
+        data = evaluate_model(self.model_func, model_params=popt, npp=(3072, 3080))
         return data
 
