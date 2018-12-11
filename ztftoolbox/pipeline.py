@@ -166,7 +166,7 @@ def proc_img(img, wdir_base, logger, **kwargs):
     """ wrapper function for run_instrphot process pool submission."""
     print (locals())
     my_wdir = os.path.join(wdir_base, "tmp_"+img.split("/")[-1].replace(".fits", ""))
-    run_instrphot(raw_quadrant_image=img, wdir=my_wdir, keep='psfcat.fits', logger=logger, **kwargs)
+    run_instrphot(raw_quadrant_image=img, wdir=my_wdir, logger=logger, **kwargs)
 
 def calibrate_many(imgs, wdir_base, nw=4, logger=None, **kwargs):
     """
