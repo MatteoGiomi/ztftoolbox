@@ -8,8 +8,27 @@
 import os
 import pandas as pd
 import numpy as np
-
 from scipy.stats import binned_statistic_2d
+
+
+xmin, xmax = 0, 3072
+ymin, ymax = 0, 3080
+
+def scatter_to_array_resize(x, y, z, bins = 35):
+    """
+        given a set of points, create a 2d array of desired dimensions
+        by first binning it and the resizing.
+    """
+    # to compare compute binned stat
+    binned = binned_statistic_2d(
+        x, y, z, statistic='mean', bins = bins, range = [[xmin, xmax], [ymin, ymax]])
+    hist = binned.statistic.T
+    
+    # now resize the array to the pixel shape
+    from skimage.transform import resize
+    resized = resize(hist, (ymax, xmax), order = 3, mode = 'reflect')
+    return resized
+
 
 def bin_csv(xname, yname, zname, df=None, csv_file=None, rotate=True, statistic='mean', bins=50, compression='gzip', **kwargs):
     """

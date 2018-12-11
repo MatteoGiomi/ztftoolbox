@@ -11,70 +11,20 @@
 # Author: M. Giomi (matteo.giomi@desy.de)
 
 import os
+import numpy as np
 import pandas as pd
 
 import logging
 logging.basicConfig()
 
+from scipy.optimize import curve_fit
+
 from dataslicer.dataset import dataset
 from dataslicer.metadata import metadata
 from dataslicer.objtable import objtable
 
-#import numpy as np
-#from scipy.stats import binned_statistic_2d
-
-#def bin_csv(csv_file, xname, yname, zname, rotate=True, statistic='mean', bins=50, compression='gzip', **kwargs):
-#    """
-#        given a csv file with a dataframe, bin the data according to 
-#        x and y, and compute some bin-wise statistic. Return the corresponding
-#        2D array.
-#        
-#        Uses scipy.binned_statistic_2d:
-#        https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.binned_statistic_2d.html
-#        
-#        Parameters:
-#        -----------
-#            
-#            csv_file: `str`
-#                path to a csv file that can be parsed with pandas.read_csv
-#            
-#            x[y][z]name: `str`
-#                name of the variables (x, and y) which you want to bin on, and of the
-#                quantity (z) you want to aggregate in each bin.
-#            
-#            rotate: `bool`
-#                if True, output array will be rotated 180 deg.
-#            
-#            statistic: `str`
-#                which kind of aggredation function to apply to each bin.
-#            
-#            bins: `int` or [`int`, `int`] or `array_like` or [`array`, `array`]
-#                how to bin in each dimension
-#            
-#            kwargs: `args`
-#                to be passed to scipy.binned_statistic_2d. See:
-#                
-#        
-#        Returns:
-#        --------
-#            
-#            numpy array
-#        
-#    """
-#    
-#    # read the file
-#    df = pd.read_csv(csv_file, compression = 'gzip')
-#    
-#    # add defaults to kwargs (standard RC size)
-#    bs_range = kwargs.get('range', [[0, 3072], [0, 3080]])
-#    binned = binned_statistic_2d(
-#        df[xname], df[yname], df[zname], statistic=statistic, bins=bins, range=bs_range, **kwargs)
-#    hist = binned.statistic.T
-#    
-#    # rotate eventually and return
-#    if rotate:
-#        hist = np.rot90(hist, 2)
-#    return hist
+from ztftoolbox.sf_models import sur4_rad4, evaluate_model
+from ztftoolbox.visualize import radial_profile, xmin, xmax, ymin, ymax, scatter_to_array_resize
 
 def rotate_rc_xypos(xpos, ypos, rcid=None, q=None, xmax=3072, ymax=3080):
     """
@@ -229,8 +179,193 @@ class starflatter():
             axis =1)
         return df
 
-#import concurrent.futures
-#with concurrent.futures.ProcessPoolExecutor(max_workers = 4) as executor:
-#    executor.map(starflat_rcwise, list(range(64)))
-#print ("done!")
+
+class starfitter():
+    """
+        fit the starflat maps created by the starflatter with a given model
+    """
+    
+    
+    def __init__(self, logger=None):
+        """
+        """
+        self.logger = logger if not logger is None else logging.getLogger(__name__)
+    
+    def set_model(self, model, guess='plane'):
+        """
+            set the model to be fitted to the maps and eventually it's guess.
+            
+            Parameters:
+            -----------
+                
+                model: `str` or `callable`.
+                    if string, must be one of the models defined in ztftoolbox.sf_models
+                    
+                guess: `array-like` or `str`
+                    starting point of the fit.
+        """
+        
+        #TODO: this is a phony method for now.
+        self.model_func     = sur4_rad4
+        self.model_npar     = 19
+        self.model_guess    = np.zeros(19)
+        self.model_guess[0] = 1
+        
+        
+    def fit_model_rc(self, x, y, z, zerr=None, rcid=None, rotate_radial=False, plot_dir=None):
+        """
+            given a starflat map, fit the map of magnitude residual vs x,y position.
+            
+            Parameters:
+            -----------
+                
+                x, y, z: `array-like`
+                    values of the position (x, y) and magnitude residuals (z)
+                
+                rcid: `int`
+                    ID of the readout channel (0 to 63)
+                
+                rotate_radial: `bool`
+                    if True, the points are rotated in the x-y plane so that
+                    the origin of the radial term is always in the same place. 
+                    For this to work, you need to pass the quadrant identifier.
+        """
+        
+        if rcid is None and rotate_radial:
+            raise ValueError("must provide RC ID if you want to rotate the image")
+        
+        # transform the coordinates so that the radial excess sit at the origin
+        # hint: (3k, 3k) is, in the raw coordinates, always in the upper left corner.
+        if rotate_radial:
+            q = (rcid % 4) + 1
+            if q == 1:
+                # radial origin in upper left
+                x = - (x - xmax)
+                y = - (y - ymax)
+            elif q == 2:
+                # radial origin in upper right
+                x = x
+                y = - (y - ymax)
+            elif q == 3:
+                # radial origin in lower right, nothing to do
+                x = x
+                y = y
+            else:
+                # radial origin in lower left
+                x = - (x - xmax)
+                y = y
+
+        self.logger.info("Now fitting")
+        xy = np.array((x, y))
+        
+        self.model_guess[0] = z.mean()
+        
+        if zerr is None:
+            popt, pcov = curve_fit(
+                self.model_func, xdata = xy, ydata = z, p0=self.model_guess)
+        else:
+            popt, pcov = curve_fit(
+                self.model_func, xdata=xy, ydata=z, p0=self.model_guess, sigma=zerr, absolute_sigma=True)
+        
+        self.logger.debug("Least Square Fit results:")
+        for ip, pp in enumerate(popt):
+            self.logger.debug("param #%d = %.3e"%(ip, pp))
+
+        # evaluate the fitted model on the pixels and at the source coordinates
+        fit_surf = evaluate_model(self.model_func, model_params=popt)
+        fit_residuals = z - self.model_func(xy, *popt)
+
+        ## compute the radial profile of the image
+        rad, profile, profile_e = radial_profile(x, y, z)
+        res_rad, res_profile, res_profile_e = radial_profile(x, y, fit_residuals)
+        self.logger.info("DATA MEAN & STD:", z.mean(), z.std())
+        self.logger.info("FIT RESIDUAL MEAN & STD:", fit_residuals.mean(), fit_residuals.std())
+        
+        # plot the stuff
+        if not plot_dir is None:
+            
+            import matplotlib.pyplot as plt
+            vmin, vmax = -0.04, +0.04
+            
+            # plot fit results
+            fig, axes = plt.subplots(1, 3, figsize = (15, 5))
+            axes = axes.flatten()
+            imshow_args = {'aspect': 'auto', 'origin': 'lower'}
+
+            ax = axes[0]
+            h_data = scatter_to_array_resize(x, y, z, bins = 35)
+            im = ax.imshow(h_data, **imshow_args, vmin = vmin, vmax = vmax)
+            cb = plt.colorbar(im, ax = ax)
+            ax.set_title("Binned data")
+
+            ax = axes[1]
+            im = ax.imshow(fit_surf, **imshow_args, vmin = vmin, vmax = vmax)
+            cb = plt.colorbar(im, ax = ax)
+            ax.set_title("Fitted function")
+
+            ax = axes[2]
+            h_res = scatter_to_array_resize(x, y, fit_residuals, bins = 35)
+            im = ax.imshow(h_res, cmap = 'seismic', **imshow_args, vmin = vmin, vmax = vmax)
+            cb = plt.colorbar(im, ax = ax)
+            ax.set_title("Fit residuals")
+            
+            for ax in axes:
+                ax.set_xticks([])
+                ax.set_yticks([])
+            
+            fig.tight_layout()
+            fig.savefig(os.path.join(plot_dir, "fit_results_rc%d_maps.png"%rcid))
+            plt.close(fig)
+
+            # now plot the hitograms (radial profile separately)
+            fig, ax = plt.subplots()
+            ax.errorbar(rad, profile, xerr = 0, yerr = profile_e, fmt = 'o', label = "starflat data")
+            ax.errorbar(res_rad, res_profile, xerr = 0, yerr = res_profile_e, fmt = 'o', label = "2D fit residuals")
+        #    ax.plot(rad, radp_fit(rad), label = "1D fit (poly %d order)"%radp_poly_order)
+            ax.set_title("radial profile")
+            ax.set_xlabel("radius [pixel]")
+            ax.set_ylabel("Average $m_{diff}$ in ring [mag]")
+            ax.legend(loc = 'best')
+            fig.tight_layout()
+            fig.savefig(os.path.join(plot_dir, "fit_results_rc%d_radial.png"%rcid))
+            plt.close(fig)
+            
+            
+            # now plot the pulls and the residuals
+            fig, axes = plt.subplots(1, 2, figsize = (10, 5))
+            ax = axes[0]
+            ax.set_title("Residuals")
+            h = ax.hist(z, bins = 100, histtype = "step", label = "Data")
+            h = ax.hist(fit_residuals, bins = h[1], histtype = "step", label = "Fit residuals")
+            ax.legend(loc = 'best')
+            ax.set_xlabel("magnitude residuals [mag]")
+            ax.set_ylabel("number of data points")
+            
+            # and the pulls
+            if not zerr is None:
+                ax = axes[1]
+                ax.yaxis.tick_right()
+                ax.yaxis.set_label_position("right")
+                ax.set_title("Pulls")
+                h = ax.hist(z/zerr, bins = 100,  histtype = "step", label = "Data")
+                h = ax.hist(fit_residuals/zerr, bins = h[1], histtype = "step", label = "Fit residuals")
+                print ("STD of data pulls: %.2e"%np.std(z/zerr))
+                print ("STD of residual pulls: %.2e"%np.std(fit_residuals/zerr))
+            
+            # plot a gaussinan
+        #    popt, pcov = curve_fit(gauss_function, h[1][:1], h[0], p0 = [sum(h[0]), 0, 1])
+        #    ax.plot(h[1],gauss_function(h[1], *popt), 'k')
+            ax.set_yscale('log')
+            ax.legend(loc = 'best')
+            ax.set_xlabel("magnitude residuals pull ($m_{diff}/\Delta m_{diff}$)")
+            ax.set_ylabel("number of data points")
+            
+            # plot the radial profile
+            fig.savefig(os.path.join(plot_dir, "fit_results_rc%d_hist.png"%rcid))
+            plt.close(fig)
+        
+        
+        # now return the data
+        data = evaluate_model(self.model_func, model_params=popt, npp=(3072, 3088))
+        return data
 
