@@ -58,6 +58,6 @@ def evaluate_model(model, model_params, xrange=(0, 3072),
         px = np.linspace(xrange[0], xrange[1], npp[0])
     if py is None:
         py = np.linspace(yrange[0], yrange[1], npp[1])
-    g_xy = np.array(np.meshgrid(py, px)).T.reshape(-1, 2).T
+    g_xy = np.array(np.meshgrid(px, py)).T.reshape(-1, 2).T
     return model(g_xy, *model_params).reshape(npp[0], npp[1]).T
 
