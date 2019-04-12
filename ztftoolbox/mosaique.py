@@ -30,7 +30,7 @@ def rqid(ccd, q):
 
 def ccdqid(rc):
     """
-        given the readout quadrant ID (0 to 63), 
+        given the readout quadrant ID (0 to 63),
         computes the ccd (1 to 16) and quadrant (1 to 4) ID
     """
     ccd_id = rc//4 + 1
@@ -38,15 +38,23 @@ def ccdqid(rc):
     return ccd_id, q
 
 
+def rcs_for_ccd(ccd):
+    """
+        return a list with the IDs of the 4 RC 
+        corresponding to a given CCD
+    """
+    return [rqid(ccd, q) for q in range(1, 5)]
+
+
 def getaxesxy(ccd, q):
     """
-        given the ccd number (from 1 to 16) and the 
-        CCD-wise readout channel number (from 1 to 4), 
-        this function return the x-y position of this 
+        given the ccd number (from 1 to 16) and the
+        CCD-wise readout channel number (from 1 to 4),
+        this function return the x-y position of this
         readout quadrant on the 8 x 8 grid of the full ZTF field.
     """
     yplot=7-( 2*((ccd-1)//4) + 1*(q==1 or q==2) )
-    xplot=2*( 4-(ccd-1)%4)-1 - 1*(q==2 or q==3) 
+    xplot=2*( 4-(ccd-1)%4)-1 - 1*(q==2 or q==3)
     return int(xplot), int(yplot)
 
 
@@ -54,7 +62,7 @@ def getaxesxy_ccd(ccdid):
     """
         given the ID number of a CCD (1 to 16) return the
         x/y position of the ccd on a 4x4 matrix, so that, i.e.:
-        
+
         fig, axes = plt.subplots(4, 4, sharex=True, sharey=True)
         ax = axes[row][col]
     """
@@ -65,23 +73,23 @@ def getaxesxy_ccd(ccdid):
 
 def combine_to_ccd(quadrants, rotate=True):
     """
-        given a list of 4 np array containing the image of each readout channel, 
+        given a list of 4 np array containing the image of each readout channel,
         returns a ccd-wise array, that is:
-                            
+
                             2   |   1
                             ---------
                             3   |   4
-        
+
         Parameters:
         -----------
-        
+
             quandrants: `array-like`
-                list / tuple / array with the 4 rc images. Quadrants should be 
+                list / tuple / array with the 4 rc images. Quadrants should be
                 supplied in the right order: [q1, q2, q3, q4].
     """
-    
+
     q1, q2, q3, q4 = quadrants[0], quadrants[1], quadrants[2], quadrants[3]
-    
+
     if rotate:
         row_top = np.hstack((np.rot90(q2, 2), np.rot90(q1, 2)))
         row_bottom = np.hstack((np.rot90(q3, 2), np.rot90(q4, 2)))
@@ -92,22 +100,34 @@ def combine_to_ccd(quadrants, rotate=True):
     return np.vstack((row_bottom, row_top))
 
 
-def combineimages(files, outfile, plot=True, gapX = 462, gapY = 645, 
+def split_in_quadrants(ccd_array):
+    """
+        split an array into quadrants and return them
+        ordered by their quadrant number (1 to 4). The opposite
+        of combine_to_ccd.
+    """
+    pieces = [np.vsplit(hh, 2) for hh in np.hsplit(ccd_array, 2)]
+    ll, ul = pieces[0]
+    lr, ur = pieces[1]
+    return {1: ur, 2: ul, 3: ll, 4: lr}
+
+
+def combineimages(files, outfile, plot=True, gapX = 462, gapY = 645,
     fill_value = 0, newshape=None, overwrite=False):  #, newshape=(616, 512))
-    """ 
-        Combine CCD images into a full frame and save the output to a file. 
+    """
+        Combine CCD images into a full frame and save the output to a file.
         Adapted from Matthew's combine_cal_files
-  
+
         Parameters
         ----------
         files: `list`
             list of 16 fits files (one for ccd), that has to be combined together.
-            IMPORTANT: this list has to be sorted according to ccd ID, otherwise the 
+            IMPORTANT: this list has to be sorted according to ccd ID, otherwise the
             trick won't work!
         outfile: `str`
             name of the output file that will be produced.
         plot: `bool`
-            if true, a plot will be created. Only works if newshape is not None, 
+            if true, a plot will be created. Only works if newshape is not None,
             that is, if the data has been downsampled.
         gapX : int
             The separation between CCDs in the x (RA) direction
@@ -118,7 +138,7 @@ def combineimages(files, outfile, plot=True, gapX = 462, gapY = 645,
         newshape : tuple
             if not None, the data array is downsampled to the newshape using bin_ndarray.
     """
-    
+
     # here is the modified Matthew's function
     if not os.path.isfile(outfile) or overwrite:
         print ("combinig images...")
@@ -126,19 +146,19 @@ def combineimages(files, outfile, plot=True, gapX = 462, gapY = 645,
         for ccdrow in tqdm.tqdm(range(4)):
             for qrow in range(2):
                 chunks = []
-                for ccd in range(4): 
+                for ccd in range(4):
                     hdulist = fits.open(files[4 * ccdrow + (4 - ccd) - 1])
                     if qrow == 0:
-                        img_data_1 = hdulist[3].data   
+                        img_data_1 = hdulist[3].data
                         img_data_2 = hdulist[4].data
                     else:
                         img_data_1 = hdulist[2].data
                         img_data_2 = hdulist[1].data
-                    
+
                     if not newshape is None:
                         img_data_1=bin_ndarray(img_data_1, newshape, 'mean')
                         img_data_2=bin_ndarray(img_data_2, newshape, 'mean')
-                    
+
                     # Rotate by 180 degrees
                     img_data_1 = np.rot90(img_data_1, 2)
                     img_data_2 = np.rot90(img_data_2, 2)
@@ -153,8 +173,8 @@ def combineimages(files, outfile, plot=True, gapX = 462, gapY = 645,
         print ("combined image saved to: %s"%outfile)
 
     # eventually plot it
-    if (plot is True) and os.path.isfile(outfile):  #not (newshape is None) 
-    
+    if (plot is True) and os.path.isfile(outfile):  #not (newshape is None)
+
         fig, ax=plt.subplots(figsize=(10, 10))
         try:
             norm=ImageNormalize(array, interval=ZScaleInterval())
@@ -162,8 +182,8 @@ def combineimages(files, outfile, plot=True, gapX = 462, gapY = 645,
             array=fits.getdata(outfile, 0)
             norm=ImageNormalize(array, interval=ZScaleInterval())
         im=ax.imshow(
-            array, origin='lower', aspect='auto', 
-            cmap='nipy_spectral', norm=norm, 
+            array, origin='lower', aspect='auto',
+            cmap='nipy_spectral', norm=norm,
             interpolation='none')
         cb=plt.colorbar(im, ax=ax)
         cb.set_label("mean $\Delta$t [s] in each pixel group")
@@ -177,7 +197,7 @@ def plot_ccd_image(ccdfile, outfile, rotate = True, cmap = "Greys", clabel = "")
     """
         make a plot with the 4 rc in one raw image file
     """
-    
+
     # read in the data and eventually rotate it
     data = []
     for irc in range(1, 5):
@@ -186,16 +206,16 @@ def plot_ccd_image(ccdfile, outfile, rotate = True, cmap = "Greys", clabel = "")
         else:
             rc_img = fits.getdata(ccdfile, irc)
         data.append(np.float32(rc_img))
-    
+
     # prepare the plot
     fig, ((ax2, ax1), (ax3, ax4)) = plt.subplots(
         2, 2, figsize=(8, 8), sharex=True, sharey=True)
-    
+
     # combine all the data to have a global scaling
     flatdata = np.array(data).flatten()
     norm=ImageNormalize(flatdata, interval=ZScaleInterval())
-    
-    # plot 
+
+    # plot
     for irc in range(1, 5):
         # pick the right axes
         if irc==1:
@@ -206,11 +226,11 @@ def plot_ccd_image(ccdfile, outfile, rotate = True, cmap = "Greys", clabel = "")
             ax=ax3
         else:
             ax=ax4
-        
+
         im=ax.imshow(data[irc -1], origin='lower', norm=norm, aspect='auto', cmap = cmap)
         ax.set_xticks([])
         ax.set_yticks([])
-        
+
     # add colorbar and save plot
     fig.tight_layout()
     fig.subplots_adjust(wspace=0.0, hspace=0.0)
@@ -220,46 +240,46 @@ def plot_ccd_image(ccdfile, outfile, rotate = True, cmap = "Greys", clabel = "")
     print ("plot saved to:", outfile)
     plt.close(fig)
 
-def split_in_rc(infile, outfile_tmpl = None, overwrite = False, 
+def split_in_rc(infile, outfile_tmpl = None, overwrite = False,
         dtype  = 'float32', rm_original = False, compress = True, **writeto_kwargs):
     """
-        split a ZTF raw image file (CCD wise) into the 4 files correspoding to the 
-        readout channels.  
-    
+        split a ZTF raw image file (CCD wise) into the 4 files correspoding to the
+        readout channels.
+
         Parameters:
         -----------
-        
+
             infile: `str`
                 path to the input CCD, raw image file.
-            
-            outile_tmpl: `str` 
-                name template for the output files. It has to contain a sequence 
+
+            outile_tmpl: `str`
+                name template for the output files. It has to contain a sequence
                 that can be formatted via a single integer, specifiyng the readout channel.
                 If None defaults to infile+'_rc%02d_'.
-            
+
             overwrite: `bool`
                 self explaining
-            
+
             dtype: `str` or built-in data type
                 data type to case the images to
-            
+
             rm_original: `bool`
                 weather or not the original file has to be removed.
-            
+
             compress: `bool`
                 if True, write the file as a CompressedHDU, docs at:
                 http://docs.astropy.org/en/stable/io/fits/api/images.html#astropy.io.fits.CompImageHDU
-            
+
             writeto_kwargs: `astropy.io.fits.writeto kwargs`
                 additional arguments to pass the astropy.io.fits.writeto method
-            
+
     """
-    
+
     if outfile_tmpl is None:
         pieces = os.path.basename(infile).split(".fits")
         pieces.insert(len(pieces)-1, "_rc%02d.fits")
         outfile_tmpl =  os.path.join(os.path.dirname(infile), "".join(pieces))
-    
+
     hudl = fits.open(infile)
     iccd = hudl[0].header['CCD_ID']
     for irq in range(1, 5):
@@ -273,10 +293,10 @@ def split_in_rc(infile, outfile_tmpl = None, overwrite = False,
             chdu.writeto(outfile, overwrite = overwrite, **writeto_kwargs)
         else:
             fits.writeto(
-            outfile, 
-            data = hudl[irq].data.astype(dtype), 
+            outfile,
+            data = hudl[irq].data.astype(dtype),
             header = hudl[irq].header, overwrite = overwrite, **writeto_kwargs)
-            
+
     hudl.close()
     if rm_original:
         os.remove(infile)

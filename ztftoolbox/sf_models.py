@@ -7,7 +7,54 @@
 
 import numpy as np
 from numpy import sqrt
+from ztftoolbox.visualize import xsize, ysize
+from scipy.interpolate import SmoothBivariateSpline, RectBivariateSpline
 
+def spline_fit(x, y, z, evaluate=False, full_ccd=True, **interp_kwargs):
+    """
+        spline fit to unstructured 3d data using scipy SmoothBivariateSpline.
+        return callable and function evaluated over the pixels.
+        
+        Parameters:
+        -----------
+            
+            x, y, z: `array-like`
+                data points to fit: f(x,y) = z
+            
+            evaluate: `bool`
+                if True, evaluate the function over the pixels
+            
+            full_ccd: `bool`
+                if you want to evaluate the model over a full CCD or 
+                just a RC.
+        
+        Returns:
+        --------
+        
+            spline function (+array)
+    """
+    # smooth spline fit
+    spline = SmoothBivariateSpline(x, y, z, **interp_kwargs)
+    
+    # eval spline over the pixels
+    if evaluate:
+        xmin, ymin = 0, 0
+        if full_ccd:
+            xmin, ymin = -xsize, -ysize
+        x_pix, y_pix = np.arange(xmin, xsize)[np.newaxis,], np.arange(ymin, ysize)[:,np.newaxis]
+        spline_arr = spline.ev(x_pix, y_pix)
+        return spline, spline_arr
+    else:
+        return spline
+
+def interp_array(arr):
+    """
+        interpolate 2d array. E.g.:
+        func = interp(arr)
+        func(x, y) = arr[y, x]
+    """
+    x_px, y_px = np.arange(arr.shape[1]), np.arange(arr.shape[0])
+    return RectBivariateSpline(x_px, y_px, arr.T, kx=1, ky=1)
 
 def sur4_rad4(xy, *coef):
     """

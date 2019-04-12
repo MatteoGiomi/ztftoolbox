@@ -22,9 +22,11 @@ from scipy.optimize import curve_fit
 from dataslicer.dataset import dataset
 from dataslicer.metadata import metadata
 from dataslicer.objtable import objtable
+from dataslicer.srcdf import srcdf
 
-from ztftoolbox.sf_models import sur4_rad4, evaluate_model
-from ztftoolbox.visualize import radial_profile, xmin, xmax, ymin, ymax, scatter_to_array_resize
+from ztftoolbox.sf_models import sur4_rad4, evaluate_model, spline_fit, interp_array
+from ztftoolbox.visualize import radial_profile, to_chip_array
+from ztftoolbox.mosaique import split_in_quadrants, rqid
 
 def rotate_rc_xypos(xpos, ypos, rcid=None, q=None, xmax=3072, ymax=3080):
     """
@@ -212,7 +214,7 @@ class starfitter():
         self.model_guess[0] = 1
         
         
-    def fit_model_rc(self, x, y, z, zerr=None, rcid=None, rotate_radial=False, plot_dir=None):
+    def fit_analytical_model_rc(self, x, y, z, zerr=None, rcid=None, rotate_radial=False, plot_dir=None):
         """
             given a starflat map, fit the map of magnitude residual vs x,y position.
             
@@ -293,7 +295,7 @@ class starfitter():
             imshow_args = {'aspect': 'auto', 'origin': 'lower'}
 
             ax = axes[0]
-            h_data = scatter_to_array_resize(x, y, z, bins = 35)
+            h_data = to_chip_array(x, y, z, bins = 35)
             im = ax.imshow(h_data, **imshow_args, vmin = vmin, vmax = vmax)
             cb = plt.colorbar(im, ax = ax)
             ax.set_title("Binned data")
@@ -304,7 +306,7 @@ class starfitter():
             ax.set_title("Fitted function")
 
             ax = axes[2]
-            h_res = scatter_to_array_resize(x, y, fit_residuals, bins = 35)
+            h_res = to_chip_array(x, y, fit_residuals, bins = 35)
             im = ax.imshow(h_res, cmap = 'seismic', **imshow_args, vmin = vmin, vmax = vmax)
             cb = plt.colorbar(im, ax = ax)
             ax.set_title("Fit residuals")
@@ -368,4 +370,89 @@ class starfitter():
         # now return the data
         data = evaluate_model(self.model_func, model_params=popt, npp=(3072, 3080))
         return data
+    
+    def fit_spline_model(self, sf_dfs, ccd_id, ccd_only=False):
+        """
+            spline fit to the starflat data (the dataframes returned by the 
+            starflatter method). This method is using data from a full CCD
+            to fit a smooth spline capturing the CCD-wide variations. 
+            
+            If ccd_only is False, the resulting model (a numpy array) is split back 
+            into the 4 quadrants, and the residuals (data-ccd-wide model) for each
+            quadrants are then fitted with a spline again, allowing to capture 
+            higher-frequency variations and RC specific features. 
+            
+            The ccd-wide model and the rc-one are then summed together to build
+            the full model.
+            
+            Parameters:
+            -----------
+                
+                sf_dfs: `dict`
+                    dictionary with 4 dfs from the starflat data, indexed
+                    by their readout channel id, i.e.
+                        {42: df_with_sf_data_for_rc_42, ...}
+                
+                ccd_id: `int`
+                    ID of the CCD (1 to 16)
+                
+                rc_id: `int`
+                    ID of the readout channel (0 to 63)
+                
+                ccd_only: `bool`
+                    weather to make just the pass on the CCD-wide fit.
+            
+            Returns:
+            --------
+            
+                models for the 4 rc given as inputs.
+        """
+        
+        # transform to ccd wide coordinates and get all the data together
+        x, y, z = np.array([]), np.array([]), np.array([])
+        for rcid, df in sf_dfs.items():
+            sdf = srcdf(df)
+            xccd, yccd = sdf.compute_ccd_coord('xpos', 'ypos', rotate=True, rcid=rcid)
+            x = np.append(x, xccd)
+            y = np.append(y, yccd)
+            z = np.append(z, sdf['mag_diff'])
+        
+        # first pass: spline fit over the full CCD
+        ccd_fit, ccd_fit_eval = spline_fit(x, y, z, full_ccd=True, evaluate=True, kx=5, ky=5)
+        
+        # split the CCD back into its quadrants and
+        # reindex it according to the RC id
+        quadrants = split_in_quadrants(ccd_fit_eval)
+        quadrants = {rqid(ccd_id, qid): np.rot90(qq, 2) for qid, qq in quadrants.items()}
+        
+        # if you are so easily satisfied then..
+        if ccd_only:
+            return quadrants
+        
+        # now, we do the second pass: select the RC you want
+        out = {}
+        for rc_id, rc_df in sf_dfs.items():
+            # compute the residuals wrt the CCD wide model
+            # and fit them again, now with RC coordinates
+            res = rc_df['mag_diff'] - ccd_fit.ev(rc_df['ccd_xpos'], rc_df['ccd_ypos'])
+            rc_fit, rc_fit_eval = spline_fit(
+                rc_df['xpos'], rc_df['ypos'], res, full_ccd=False, evaluate=True, kx=5, ky=5)
+            # add the models and keep aside
+            my_mod = rc_fit_eval + quadrants[rc_id]
+            out[rc_id] = my_mod
+        
+        # bye!
+        return out
+       
+    def get_residuals(self, model_array, sf_df):
+        """
+            compute the residuals of a model
+        """
+        
+        # create an interpolation of that model so that we can call it
+        model_interp = interp_array(model_array)
+        res = sf_df['mag_diff'].values - model_interp.ev(sf_df['xpos'], sf_df['ypos'])
+        res_array = to_chip_array(sf_df['xpos'], sf_df['ypos'], res)
+        return res, res_array
+        
 
