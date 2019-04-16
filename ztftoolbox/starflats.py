@@ -78,7 +78,6 @@ class starflatter():
         holds together analysis parameters and dataslicer routines 
         to make starflat maps from PSF fit catalogs
     """
-    #plotdirbase = "./diag_plots"
     
     def __init__(self, logger=None):
         """
@@ -94,22 +93,22 @@ class starflatter():
         self.errmagkey      = "sigmag"
         
         # keys from header file to read and include in the dataslicer tables
-        self.meta_keys = ['MAGZP', 'EXPID', 'MAGZPUNC', 'CLRCOEFF', 'CLRCOUNC', 'OBSMJD', 'FIELDID', 'RCID']
+        self.meta_keys = ['MAGZP', 'MAGZPUNC', 'CLRCOEFF', 'CLRCOUNC', 'EXPID', 'OBSMJD', 'FIELDID', 'RCID', 'FILTERID']
         self.meta_keys_2join = self.meta_keys
 
         # clustering params
         self.cluster_size_arcsec = 3
         self.ps1cp_rs_arcsec = 3
-        self.min_sources_in_cluster = 0#5
+        self.min_sources_in_cluster = 5
 
         # selection cuts
-        self.preselection = "flags == 0 & snr > 10"
-        self.hard_magdiff_cut = "abs(cal_mag - gmag) < 0.3"
+        self.preselection = "flags == 0 & snr > 5"
+        self.hard_magdiff_cut = "abs(cal_mag - ps1mag_band) < 0.3"
         self.dist2ps1_cluster_cut = "dist2ps1<0.3"
         self.iqr_mag_cut = 2.5
 
 
-    def starflat_rc(self, rcid, datadir, plotdir, test=False, metadata_file=None, save_csvs=False):
+    def starflat_rc(self, rcid, fid, datadir, plotdir, test=False, metadata_file=None, save_csvs=False):
         """
             run the starflat analsysis on a single RC for the files.
             
@@ -140,7 +139,8 @@ class starflatter():
             header_keys = self.meta_keys, 
             metadata_file = metadata_file,#os.path.join(datadir, 'starflat_metadata.csv'),
             force_reload = False,
-            expr = 'RCID == %d'%rcid, downcast=False, obj_tocsv=save_csvs, meta_tocsv=save_csvs)
+            expr = 'RCID == %d and FILTERID == %d'%(rcid, fid), downcast=False, 
+            obj_tocsv=save_csvs, meta_tocsv=save_csvs)
         ds.set_plot_dir(plotdir)
 
         # preselecyion
@@ -151,12 +151,13 @@ class starflatter():
         # add meta to sources
         ds.merge_metadata_to_sources(metadata_cols = self.meta_keys_2join, join_on = 'OBSID')
         
-        # cluster and PS1 match
+        # cluster sources on the sky
         ds.objtable.cluster_sources(
             cluster_size_arcsec = self.cluster_size_arcsec,
             min_samples = self.min_sources_in_cluster,
             xname = self.xcoord, yname = self.ycoord, purge_df = True)
         
+        # match clusters to PS1 calibrators
         ds.objtable.match_to_PS1cal(rs_arcsec = self.ps1cp_rs_arcsec, 
             xname = self.xcoord, yname = self.ycoord, use = 'clusters', plot = True)
         
@@ -165,19 +166,22 @@ class starflatter():
 
         # calibrate photometry
         ds.objtable.calmag(
-            self.magkey, err_mag_col = self.errmagkey, calmag_col = 'cal_mag', 
-            clrcoeff_name = 'CLRCOEFF', ps1_color1 = 'gmag', ps1_color2 = 'rmag')
+            self.magkey, err_mag_col = self.errmagkey, calmag_col = 'cal_mag',
+            clrcoeff_name = 'CLRCOEFF', filterid_col='FILTERID')
+
+        # add filter appropriate PS1 magnitude
+        ds.objtable.add_bandwise_PS1mag_for_filter('ps1mag_band')
         
         # cut based on PS1
-        ds.objtable.ps1based_outlier_rm_iqr('cal_mag', self.iqr_mag_cut, ps1mag_name='gmag', n_mag_bins=10, plot = True)
-        
+        ds.objtable.ps1based_outlier_rm_iqr('cal_mag', self.iqr_mag_cut, ps1mag_name='ps1mag_band', n_mag_bins=10, plot = True)
+
         # remove sources belonging to cluster with outlier
-        ds.objtable.select_clusters(self.hard_magdiff_cut, plot_x = 'cal_mag', plot_y = 'gmag')
-        
+        ds.objtable.select_clusters(self.hard_magdiff_cut, plot_x = 'cal_mag', plot_y = 'ps1mag_band')
+
         # add nice column and return
         df = pd.concat(
             [ds.objtable.df,
-            ( ds.objtable.df['cal_mag'] - ds.objtable.df['gmag'] ).rename('mag_diff')],
+            ( ds.objtable.df['cal_mag'] - ds.objtable.df['ps1mag_band'] ).rename('mag_diff')],
             axis =1)
         return df
 
@@ -371,7 +375,7 @@ class starfitter():
         data = evaluate_model(self.model_func, model_params=popt, npp=(3072, 3080))
         return data
     
-    def fit_spline_model(self, sf_dfs, ccd_id, ccd_only=False):
+    def fit_spline_ccdmodel(self, sf_dfs, ccd_id, ccd_only=False):
         """
             spline fit to the starflat data (the dataframes returned by the 
             starflatter method). This method is using data from a full CCD
@@ -395,9 +399,6 @@ class starfitter():
                 
                 ccd_id: `int`
                     ID of the CCD (1 to 16)
-                
-                rc_id: `int`
-                    ID of the readout channel (0 to 63)
                 
                 ccd_only: `bool`
                     weather to make just the pass on the CCD-wide fit.
@@ -441,7 +442,6 @@ class starfitter():
             my_mod = rc_fit_eval + quadrants[rc_id]
             out[rc_id] = my_mod
         
-        # bye!
         return out
        
     def get_residuals(self, model_array, sf_df):
@@ -454,5 +454,92 @@ class starfitter():
         res = sf_df['mag_diff'].values - model_interp.ev(sf_df['xpos'], sf_df['ypos'])
         res_array = to_chip_array(sf_df['xpos'], sf_df['ypos'], res)
         return res, res_array
+    
+    def kvalidate_ccdmodel(self, sf_dfs, ccd_id, k=5, rnd_seed=42, ccd_only=False):
+        """
+            perform k-fold cross validation to evaluate the errors on
+            the starflat models obtained with the fit_spline_ccdmodel method
+            
+            Parameters:
+            -----------
+                
+                sf_dfs: `dict`
+                    dictionary with 4 dfs from the starflat data, indexed
+                    by their readout channel id, i.e.
+                        {42: df_with_sf_data_for_rc_42, ...}
+                
+                ccd_id: `int`
+                    ID of the CCD (1 to 16)
+                
+                ccd_only: `bool`
+                    weather to make just the pass on the CCD-wide fit.
+                
+                k: `int`
+                    number of partitions of the data.
+                
+                rnd_seed: `scalar`
+                    used for the first scrambling of the data (prior to partitioning).
+                
+                **fit_method_kwargs: `kwargs`
+                    additional to be passed to fit_method call.
+        """
         
-
+        # prepare the inputs for x-validation: 
+        # split the input datasets into folds. This list will 
+        # contain k (train, test) pairs, where train and test are 
+        # dictionaries containg the dataframes indexed by the different RCs
+        from sklearn.model_selection import KFold
+        kfold = KFold(n_splits=k, shuffle=True, random_state=rnd_seed)
+        folds = [[{}, {}] for kk in range(k)]
+        for rcid, sdf in sf_dfs.items():
+            for ifold, idx in enumerate(kfold.split(sdf)):
+                folds[ifold][0][rcid] = sdf.iloc[idx[0]]
+                folds[ifold][1][rcid] = sdf.iloc[idx[1]]
+        
+        # now fit the model using the folds and evaluate 
+        # the residuals with respect to the other dataset.
+        models, residuals = {rcid: [] for rcid in sf_dfs.keys()}, {rcid: [] for rcid in sf_dfs.keys()}
+        for ifold, fold in enumerate(folds):
+            inputs, outputs = fold
+            fit = self.fit_spline_ccdmodel(inputs, ccd_id=ccd_id, ccd_only=ccd_only)
+            
+            # eval residuals for each RC and save it
+            for rcid in sf_dfs.keys():
+                res, res_array = self.get_residuals(fit[rcid], sf_dfs[rcid])
+                models[rcid].append(fit[rcid])
+                residuals[rcid].append(res_array)
+        
+        # convert everything to array
+        models = {rcid: np.array(arr_list) for rcid, arr_list in models.items()}
+        residuals = {rcid: np.array(arr_list) for rcid, arr_list in residuals.items()}
+        
+        import matplotlib.pyplot as plt
+        fig, axes = plt.subplots(1, 2)
+        
+        ax = axes[0]
+        im = ax.imshow(models[42].std(axis=0), aspect='auto', origin='lower')#, vmin=0.02, vmax=0.02)
+        plt.colorbar(im, ax=ax)
+        ax.set_title("STD of models")
+        
+        ax = axes[1]
+        im = ax.imshow(residuals[42].mean(axis=0), aspect='auto', origin='lower', vmin=-0.02, vmax=0.02, cmap='seismic')
+        plt.colorbar(im, ax=ax)
+        ax.set_title("Mean of residuals")
+        
+        
+#        import matplotlib.pyplot as plt
+#        fig, axes = plt.subplots(2, 3, sharex=True, sharey=True)
+#        axes = axes.flatten()
+#        ax = axes[ifold]
+#        ax.imshow(fitres[42], aspect='auto', origin='lower', vmin=-0.04, vmax=0.04)
+#        ax.set_title("FOLD %d"%ifold)
+#            fitres.append(models)
+        plt.show()
+        input()
+        
+            
+            
+            
+            
+        
+#        fit_spline_model(self, sf_dfs, ccd_id, ccd_only=False)
