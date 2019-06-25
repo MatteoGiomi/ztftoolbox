@@ -26,7 +26,7 @@ from dataslicer.srcdf import srcdf
 
 from ztftoolbox.sf_models import sur4_rad4, evaluate_model, spline_fit, interp_array
 from ztftoolbox.visualize import radial_profile, to_chip_array
-from ztftoolbox.mosaique import split_in_quadrants, rqid
+from ztftoolbox.mosaique import split_in_quadrants, rqid, getaxesxy, ccdqid
 
 def rotate_rc_xypos(xpos, ypos, rcid=None, q=None, xmax=3072, ymax=3080):
     """
@@ -184,6 +184,74 @@ class starflatter():
             ( ds.objtable.df['cal_mag'] - ds.objtable.df['ps1mag_band'] ).rename('mag_diff')],
             axis =1)
         return df
+    
+    @staticmethod
+    def do_starflat_map(df_files, df_cut=None, rc_ids=None, proc_func=None, **read_csv_kwargs):
+        """
+            Combine the results of the starflat analysis into a full-camera plot.
+            
+            Parameters:
+            -----------
+            
+                df_files: `list`
+                    a list 64 csv files containing the processed catalogs (as DataFrames).
+                    One file for each RC, sorted accrodingly: [sf_rc0, sf_rc1, ..., sf_rc63]
+                
+                df_cut: `str` or None
+                    string to select entries in the dataframe. This will be applied to all dataframes.
+                
+                rc_ids: `list`
+                    optionally specify the RC id of each of the input files. rc_ids[xx] is the 
+                    RC ID corresponding to the file df_files[xx].
+                
+                proc_func: `callable`
+                    funtion that takes a dataframe and return an array. To be used to plot 
+                    more fancy stuff. Default is just the binned mean statistic. 
+                
+                read_csv_kwargs: `kwargs`
+                    optional to be passed to pandas read_csv
+                    
+            Returns:
+            --------
+                
+            array of the full starflat map.
+        """
+        
+        full_camera = np.array([ None for _ in range(64)]).reshape(8, 8)
+        for idx, csv in enumerate(df_files):
+            
+            # figure out readout channel
+            rcid = idx if rc_ids is None else rc_ids[idx]
+            
+            # read and eventually select and then bin
+            df = pd.read_csv(csv, **read_csv_kwargs)#compression='gzip', engine = 'c', memory_map = True)
+            if not df_cut is None:
+                df = df.query(df_cut)
+            
+            # get the starflat map from the df
+            if proc_func is None:
+                arr = to_chip_array(df['xpos'], df['ypos'], df['mag_diff'], resize_h=False)
+            else:
+                arr = proc_func(df)
+            arr = np.rot90(arr, 2)
+
+            # figure out where to plot
+            plotx, ploty = getaxesxy(*ccdqid(rcid))
+            full_camera[plotx][ploty] = arr
+        
+        # in case you miss some data, replace with zeros
+        non_zero_el = np.zeros_like(arr)
+        for px in range(8):
+            for py in range(8):
+                if full_camera[px][py] is None:
+                    full_camera[px][py] = non_zero_el
+        
+        # combine together the quadrants
+        rows = []   
+        for irow in range(8):
+            rows.append( np.hstack([full_camera[icol][7-irow] for icol in range(8)]) )
+        full_camera = np.vstack(rows)
+        return full_camera
 
 
 class starfitter():
